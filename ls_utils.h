@@ -1,24 +1,24 @@
-/*   cuna_utils.h
- *   ============ 
+/*   ls_utils.h
+ *   ========== 
  *   
  *   Misc. functions useful for other parts of the program 
  * 
  *   (c) John Hoffman 2016
  * 
- *   This file is part of CUNA
+ *   This file is part of cunfftls
  *
- *   CUNA is free software: you can redistribute it and/or modify
+ *   cunfftls is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
  *   the Free Software Foundation, either version 3 of the License, or
  *   (at your option) any later version.
  *
- *   CUNA is distributed in the hope that it will be useful,
+ *   cunfftls is distributed in the hope that it will be useful,
  *   but WITHOUT ANY WARRANTY; without even the implied warranty of
  *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *   GNU General Public License for more details.
  *
  *   You should have received a copy of the GNU General Public License
- *   along with CUNA.  If not, see <http://www.gnu.org/licenses/>.
+ *   along with cunfftls.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #ifndef LS_UTILS_H

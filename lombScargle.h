@@ -1,7 +1,7 @@
 /** \file ls.c
  * Implementation of LombScargle().
  *
- * \author B. Leroy
+ * \author J. Hoffman (with code borrowed extensively from B. Leroy)
  *
  * This file is part of nfftls.
  *
@@ -18,7 +18,7 @@
  * You should have received a copy of the GNU General Public License
  * along with nfftls.  If not, see <http://www.gnu.org/licenses/>.
  *
- * Copyright (C) 2012 by B. Leroy
+ * Copyright (C) 2012 by B. Leroy, 2016 by J. Hoffman
  */
 #ifndef LOMB_SCARGLE_H
 #define LOMB_SCARGLE_H
