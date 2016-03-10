@@ -12,7 +12,8 @@ NAME            := cunfftls
 NVCC=nvcc
 CC=g++
 
-CUNA_DIR=../cunfft_adjoint
+CUNA_DIR=
+#../cunfft_adjoint
 CUDA_VERSION=7.5
 BLOCK_SIZE=256
 VERSION=1.0
@@ -23,8 +24,10 @@ BUILDDIR=.
 LIBDIR=.
 BINDIR=.
 
-OPTIMIZE_CPU= -O3
-OPTIMIZE_GPU= -Xcompiler -O3 --use_fast_math
+OPTIMIZE_CPU=
+OPTIMIZE_GPU=
+#OPTIMIZE_CPU= -O3
+#OPTIMIZE_GPU= -Xcompiler -O3 --use_fast_math
 DEFS := -DBLOCK_SIZE=$(BLOCK_SIZE) -DVERSION=\"$(VERSION)\"
 NVCCFLAGS := $(DEFS) $(OPTIMIZE_GPU) -Xcompiler -fpic --gpu-architecture=compute_$(ARCH) --gpu-code=sm_$(ARCH),compute_$(ARCH) 
 CFLAGS := $(DEFS) -fPIC -Wall $(OPTIMIZE_CPU)
@@ -91,8 +94,9 @@ $(CPP_OBJ_FILES_DOUBLE) :
 .PHONY : clean
 RM=rm -f
 
-
+clean-all : clean
+	$(RM) *.dat *.png
 clean : 
-	$(RM) *.dat *.png *.so *.o 
+	$(RM) *.so *.o test-double test-single 
 
 print-%  : ; @echo $* = $($*)

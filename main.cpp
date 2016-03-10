@@ -47,7 +47,7 @@ dTyp * getFrequencies(dTyp *x, dTyp over, int n, int ng) {
 	dTyp *freqs = (dTyp *)malloc(ng * sizeof(dTyp));
 	for (int i = 0; i < ng; i++)
 		freqs[i] = (i + 1) * df;
-
+        // TODO: validate this -- I'm getting offsets in the frequency
 	return freqs;
 
 }
@@ -69,24 +69,54 @@ void testLombScargle(int n, dTyp over, dTyp hifac) {
 
 
 }*/
+#ifndef DOUBLE_PRECISION
+#define three_col_fmt "%e %e %*e"
+#define two_col_fmt "%e %e"
+#else
+#define two_col_fmt "%le %le"
+#define three_col_fmt "%le %le %*le"
+#endif
 
+#define fmt two_col_fmt
 void readLC(FILE *in, dTyp **tobs, dTyp **yobs, int *npts) {
-	
-	int nfound = fscanf(in, "%d", npts);
-	if (nfound < 1)
+	LOG("reading number of points");
+	int nptstemp;	
+	int nfound = fscanf(in, "%d", &nptstemp);
+	*npts = nptstemp;
+	fprintf(stderr, "%d observations...\n", *npts);
+
+	if (nfound < 1) {
 		eprint("can't read the first line (containing nobs)\n");
+	}
+	LOG("malloc");
 	*tobs = (dTyp *)malloc(*npts * sizeof(dTyp));
 	*yobs = (dTyp *)malloc(*npts * sizeof(dTyp));
 	
 	for(int i = 0; i < *npts; i++) {
-		nfound = fscanf(in, "%g %g", (*tobs) + i, (*yobs) + i);	
-		if (nfound < 2)
-			eprint("could not read line %d of lc file\n",i+1);
+		//fprintf(stderr,"reading obs %d\n", i);
+		nfound = fscanf(in, fmt, (*tobs) + i, (*yobs) + i);	
+		if (nfound < 2) {
+			eprint("could not read line %d of lc file (only %d found), t[i] = %lf, y[i] = %lf\n",i+1, nfound, (*tobs)[i], (*yobs)[i]);
+		}
 	}
-	fclose(in);
 
 }
 
+void lombScargleFromLC(FILE *in, dTyp over, dTyp hifac, FILE *out) {
+	dTyp *tobs, *yobs, *lsp, *frqs;
+	int npts, nfreqs;
+	LOG("readLC");
+	readLC(in, &tobs, &yobs, &npts);
+	LOG("calculate lomb scargle");
+	lsp = lombScargle(tobs, yobs, npts, over, hifac, &nfreqs, NO_FLAGS);
+	LOG("get frequencies");
+	frqs = getFrequencies(tobs, over, npts, nfreqs);
+	LOG("print results to stream");
+	for(int i = 0; i < nfreqs; i++) 
+		fprintf(out, "%e %e\n", frqs[i], lsp[i]);
+
+}
+	
 
 void timeLombScargle(int nmin, int nmax, int ntests) {
 	int dN  = (nmax - nmin) / (ntests);
@@ -105,10 +135,11 @@ void timeLombScargle(int nmin, int nmax, int ntests) {
 }
 
 int main(int argc, char *argv[]) {
-	if (argc != 5) {
+	if (argc < 5) {
 		fprintf(stderr, "usage:\n");
-		fprintf(stderr, "       [lomb scargle   ]  (3) %s l <n>    <over> <hifac>\n", argv[0]);
-		fprintf(stderr, "       [lomb sc. timing]  (4) %s L <nmin> <nmax> <ntests>\n\n", argv[0]);
+		fprintf(stderr, "       [ls from file   ]  (1) %s f <in>   <out>  <over> <hifac>\n", argv[0]);
+		fprintf(stderr, "       [lomb scargle   ]  (2) %s l <n>    <over> <hifac>\n", argv[0]);
+		fprintf(stderr, "       [lomb sc. timing]  (3) %s L <nmin> <nmax> <ntests>\n\n", argv[0]);
 		fprintf(stderr, "n      : number of data points\n");
 		fprintf(stderr, "nmin   : Smallest data size\n");
 		fprintf(stderr, "nmax   : Largest data size\n");
@@ -120,14 +151,22 @@ int main(int argc, char *argv[]) {
 
 	if (argv[1][0] == 'l')
 		testLombScargle(atoi(argv[2]), atof(argv[3]), atof(argv[4]));
-
 	else if (argv[1][0] == 'L')
 		timeLombScargle(atoi(argv[2]), atoi(argv[3]), atoi(argv[4]));
+	else if (argv[1][0] == 'f') {
+		LOG("opening lightcurve file");
+		FILE *lightcurve_file = fopen(argv[2], "r");
+		FILE *lsp_file        = fopen(argv[3], "w");
+		LOG("calculating lomb scargle");
+		lombScargleFromLC(lightcurve_file, atof(argv[4]), atof(argv[5]), lsp_file);
+		LOG("done.");
+		fclose(lsp_file);
+		fclose(lightcurve_file);
+	}
 	else {
-		fprintf(stderr, "What does %c mean? Should be either 's', 't', or 'l'.\n", argv[1][0]);
+		fprintf(stderr, "What does %c mean? Should be either 'f', 'l', or 'L'.\n", argv[1][0]);
 		exit(EXIT_FAILURE);
 	}
-
 	return EXIT_SUCCESS;
 }
 

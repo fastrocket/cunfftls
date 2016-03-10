@@ -36,24 +36,52 @@
 #define STOP_TIMER(name)  if(flags & PRINT_TIMING)\
       fprintf(stderr, "[ lombScargle ] %-20s : %.4e(s)\n", #name, seconds(clock() - start))
 #define EPSILON 1e-5
+
+#ifdef DOUBLE_PRECISION
+#define cuAtan atan
+#else
+#define cuAtan atanf
+#endif
+
 __global__
 void
 convertToLSP( const Complex *sp, const Complex *win, dTyp var, int m, int npts, dTyp *lsp) {
 
   int j = blockIdx.x * BLOCK_SIZE + threadIdx.x;
-  if ( j < m ) {
-    Complex z1 = sp[j];
-    Complex z2 = win[j];
-    dTyp hypo = cuAbs(z2);
-    dTyp hc2wt = 0.5 * cuImag(z2) / hypo;
-    dTyp hs2wt = 0.5 * cuReal(z2) / hypo;
+  if (j == m-1) lsp[j] = 0.;
+  else if ( j + 1 < m ) {
+    Complex z1 = sp[ j + 1 ];
+    Complex z2 = win[ 2 * (j + 1) ];
+    dTyp invhypo = 1./cuAbs(z2);
+    // switched cuImag(z2) -> cuReal(z2)
+//    dTyp hc2wt = 0.5 * cuReal(z2) * invhypo;
+    // switched cuReal(z2) -> cuImag(z2)
+//    dTyp hs2wt = 0.5 * cuImag(z2) * invhypo;
+    dTyp Sy = cuImag(z1);
+    dTyp S2 = cuImag(z2);
+    dTyp Cy = cuReal(z1);
+    dTyp C2 = cuReal(z2);
+    dTyp hc2wtau = 0.5 * C2 * invhypo;
+    dTyp hs2wtau = 0.5 * S2 * invhypo;
+    dTyp cwtau = cuSqrt( 0.5 + hc2wtau);
+    dTyp swtau = cuSqrt( 0.5 - hc2wtau);
+    if( S2 < 0 ) swtau *= -1;
+    dTyp cos2wttau = 0.5 * m + hc2wtau * C2 + hs2wtau * S2;
+    dTyp sin2wttau = 0.5 * m - hc2wtau * C2 - hs2wtau * S2;
+    dTyp cterm = square(Cy) / cos2wttau;
+    dTyp sterm = square(Sy) / sin2wttau;
+    lsp[j] = (cterm + sterm) / (2 * var);
+    /*
+    dTyp c2ttau = 0.5 * npts + 0.5 * C2 * (C2 * invhypo) + 0.5 * Sy 
+    dTyp hc2wt = 0.5 * cuReal(z2)  * invhypo;
+    dTyp hs2wt = 0.5 * cuImag(z2)  * invhypo;
     dTyp cwt = cuSqrt(0.5 + hc2wt);
     dTyp swt = sign(cuSqrt(0.5 - hc2wt), hs2wt);
     dTyp den = 0.5 * npts + hc2wt * cuReal(z2) + hs2wt * cuImag(z2);
     dTyp cterm = square(cwt * cuReal(z1) + swt * cuImag(z1)) / den;
     dTyp sterm = square(cwt * cuImag(z1) - swt * cuReal(z1)) / (npts - den);
-
-    lsp[j] = (cterm + sterm) / (2 * var);
+    
+    lsp[j] = (cterm + sterm) / (2 * var);*/
   }
 }
 
@@ -68,11 +96,11 @@ scaleTobs(const dTyp *tobs, int npts, dTyp oversampling) {
   dTyp tmax  = tobs[npts - 1];
   dTyp tmin  = tobs[0];
 
-  dTyp range = (tmax - tmin) * oversampling;
+  dTyp invrange = 1./((tmax - tmin) * oversampling);
   dTyp a     = 0.5 - EPSILON;
 
   for(int i = 0; i < npts; i++) 
-    t[i] = 2 * a * (tobs[i] - tmin)/range - a;
+    t[i] = 2 * a * (tobs[i] - tmin) * invrange - a;
   
   return t;
 }
@@ -111,10 +139,6 @@ lombScargle(const dTyp *tobs, const dTyp *yobs, int npts,
   // correct the "oversampling" parameter accordingly
   over *= ((float) (*ng))/((float) NG);
 
-  // calculate number of CUDA blocks we need
-  int nblocks = *ng / BLOCK_SIZE;
-  while (nblocks * BLOCK_SIZE < *ng) nblocks++;
-
   // scale t and y (zero mean, t \in [-1/2, 1/2))
   dTyp var;
   dTyp *t = scaleTobs(tobs, npts, over);
@@ -127,9 +151,8 @@ lombScargle(const dTyp *tobs, const dTyp *yobs, int npts,
   if (!(our_flags & DONT_TRANSFER_TO_CPU))
      our_flags |= DONT_TRANSFER_TO_CPU;
 
-
   START_TIMER;
-  init_plan(p , t, y   , npts,     (*ng), our_flags);
+  init_plan(p , t, y   , npts, 2 * (*ng), our_flags);
   STOP_TIMER("init_plan");
 
   // evaluate NFFT for window + signal
@@ -142,6 +165,10 @@ lombScargle(const dTyp *tobs, const dTyp *yobs, int npts,
   checkCudaErrors(
     cudaMalloc((void **) &d_lsp, (*ng) * sizeof(dTyp))
   );
+  
+  // calculate number of CUDA blocks we need
+  int nblocks = *ng / BLOCK_SIZE;
+  while (nblocks * BLOCK_SIZE < *ng) nblocks++;
   
   // convert to LSP
   START_TIMER;
