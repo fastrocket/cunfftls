@@ -5,6 +5,20 @@
 
 Requires [CUNA](https://github.com/johnh2o2/cunfft_adjoint).
 
+Uses the Non-equispaced Fast Fourier Transform (adjoint) to 
+efficiently compute the Lomb-Scargle periodogram; this implements
+the algorithm discussed in
+
+>  B. Leroy,
+>
+>  "Fast calculation of the Lomb-Scargle periodogram using
+>   nonequispaced fast Fourier transform"
+>
+>  Astron. Astrophys. 545, A50 (2012)
+>  DOI: [http://dx.doi.org/10.1051/0004-6361/201219076](http://dx.doi.org/10.1051/0004-6361/201219076)
+
+and borrows extensively from the associated codebase.
+
 #### Mode 1: single lightcurve
 **Usage**:
 

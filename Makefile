@@ -53,7 +53,7 @@ CU_OBJ_FILES_DOUBLE := $(CU_FILES:%.cu=$(BUILDDIR)/%d.o)
 
 INCLUDE := $(CUDA_INCLUDE) -I$(HEADERDIR) -I$(CUNA_DIR)/inc
 
-all : single double test-single test-double
+all : single double $(NAME)f $(NAME)d
 
 single : lib$(NAME)f.so
 double : lib$(NAME)d.so
@@ -65,10 +65,9 @@ double : lib$(NAME)d.so
 %d.so : $(CU_OBJ_FILES_DOUBLE) $(CPP_OBJ_FILES_DOUBLE) $(BUILDDIR)/dlink-double.o
 	$(CC) -shared -o $(LIBDIR)/$@ $^ $(LIBS) -lcunad
 
-test-single :
+$(NAME)f :
 	$(CC) $(CFLAGS) $(INCLUDE) -o $(BINDIR)/$@ main.cpp $(LIBS) -l$(NAME)f -lcunaf
-
-test-double : 
+$(NAME)d :
 	$(CC) $(CFLAGS) $(INCLUDE) -DDOUBLE_PRECISION -o $(BINDIR)/$@ main.cpp $(LIBS) -l$(NAME)d -lcunad
 
 %-single.o : $(CU_OBJ_FILES_SINGLE)
@@ -97,6 +96,6 @@ RM=rm -f
 clean-all : clean
 	$(RM) *.dat *.png
 clean : 
-	$(RM) *.so *.o test-double test-single 
+	$(RM) *.so *.o $(NAME)f $(NAME)d
 
 print-%  : ; @echo $* = $($*)

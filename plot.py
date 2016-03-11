@@ -8,7 +8,7 @@ OVER = 50
 HIFAC = 4
 SIGMA = 0.1
 PHI = 0.4
-Params = dict( N = 10000, freq = 10., hifac = HIFAC, over = OVER, phi = PHI, sigma = SIGMA, outfile='lsp.dat', binary='test-double', lcfile='lc.dat')
+Params = dict( N = 10000, freq = 10., hifac = HIFAC, over = OVER, phi = PHI, sigma = SIGMA, outfile='lsp.dat', binary='cunfftlsd', lcfile='lc.dat')
 
 lspdt = np.dtype([ ('f', float), ('p', float)])
 def get_signal(params):
@@ -53,9 +53,9 @@ def test_single_double(params):
 	axr.scatter(phase_fold(x, params['freq']), y, alpha=0.1, marker='.')
 	fraw.savefig('lcraw.png')
 
-	params['binary'] = 'test-single'
+	params['binary'] = 'cunfftlsf'
 	single_lsp = get_lsp(x, y, **params)
-	params['binary'] = 'test-double'
+	params['binary'] = 'cunfftlsd'
 	double_lsp = get_lsp(x, y, **params)
 	f, ax = plt.subplots()
 	ax.plot(single_lsp['f'], single_lsp['p'], label='single', color='r', ls=':', alpha=0.5)
@@ -84,7 +84,7 @@ def test_list_of_files(params):
 	os.system("./%s F list.dat %e %e"%(params['binary'], params['over'], params['hifac']))
 
 test_single_double(Params)
-#test_list_of_files(Params)
+test_list_of_files(Params)
 #freqs = np.logspace(0, 2, 10)
 #diffs = test(Params, freqs)
 #print diffs
