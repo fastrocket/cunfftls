@@ -24,10 +24,10 @@ BUILDDIR=.
 LIBDIR=.
 BINDIR=.
 
-OPTIMIZE_CPU=
-OPTIMIZE_GPU=
-#OPTIMIZE_CPU= -O3
-#OPTIMIZE_GPU= -Xcompiler -O3 --use_fast_math
+#OPTIMIZE_CPU=
+#OPTIMIZE_GPU=
+OPTIMIZE_CPU= -O3
+OPTIMIZE_GPU= -Xcompiler -O3 --use_fast_math
 DEFS := -DBLOCK_SIZE=$(BLOCK_SIZE) -DVERSION=\"$(VERSION)\"
 NVCCFLAGS := $(DEFS) $(OPTIMIZE_GPU) -Xcompiler -fpic --gpu-architecture=compute_$(ARCH) --gpu-code=sm_$(ARCH),compute_$(ARCH) 
 CFLAGS := $(DEFS) -fPIC -Wall $(OPTIMIZE_CPU)

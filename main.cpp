@@ -41,11 +41,24 @@
 #define OVERSAMPLING 10
 
 
-dTyp * getFrequencies(dTyp *x, dTyp over, int n, int ng) {
+void getNfreqsAndCorrOversampling(int npts, int over, int hifac, dTyp *new_over, int *nfreqs){
+
+   unsigned int nfreqs0 = (unsigned int) floor(0.5 * npts * over * hifac);
+
+   // correct the "oversampling" parameter accordingly
+   *nfreqs = (int) nextPowerOfTwo(nfreqs0);
+   *new_over = over * ((float) (*nfreqs)) / ((float) nfreqs0);
+
+}
+
+dTyp * getFrequencies(dTyp *x, int n, dTyp over, dTyp hifac) {
 	dTyp range = x[n - 1] - x[0];
-	dTyp df = 1. / (over * range);
-	dTyp *freqs = (dTyp *)malloc(ng * sizeof(dTyp));
-	for (int i = 0; i < ng; i++)
+	dTyp over_new; 
+	int nfreqs;
+	getNfreqsAndCorrOversampling(n, over, hifac, &over_new, &nfreqs);
+	dTyp df = 1. / (over_new * range);
+	dTyp *freqs = (dTyp *)malloc(nfreqs * sizeof(dTyp));
+	for (int i = 0; i < nfreqs; i++)
 		freqs[i] = (i + 1) * df;
         // TODO: validate this -- I'm getting offsets in the frequency
 	return freqs;
@@ -83,7 +96,6 @@ void readLC(FILE *in, dTyp **tobs, dTyp **yobs, int *npts) {
 	int nptstemp;	
 	int nfound = fscanf(in, "%d", &nptstemp);
 	*npts = nptstemp;
-	fprintf(stderr, "%d observations...\n", *npts);
 
 	if (nfound < 1) {
 		eprint("can't read the first line (containing nobs)\n");
@@ -102,15 +114,18 @@ void readLC(FILE *in, dTyp **tobs, dTyp **yobs, int *npts) {
 
 }
 
+
 void lombScargleFromLC(FILE *in, dTyp over, dTyp hifac, FILE *out) {
 	dTyp *tobs, *yobs, *lsp, *frqs;
 	int npts, nfreqs;
+	//clock_t s
 	LOG("readLC");
 	readLC(in, &tobs, &yobs, &npts);
 	LOG("calculate lomb scargle");
+	
 	lsp = lombScargle(tobs, yobs, npts, over, hifac, &nfreqs, NO_FLAGS);
 	LOG("get frequencies");
-	frqs = getFrequencies(tobs, over, npts, nfreqs);
+	frqs = getFrequencies(tobs, npts, over, hifac);
 	LOG("print results to stream");
 	for(int i = 0; i < nfreqs; i++) 
 		fprintf(out, "%e %e\n", frqs[i], lsp[i]);
@@ -134,38 +149,65 @@ void timeLombScargle(int nmin, int nmax, int ntests) {
 	}
 }
 
-int main(int argc, char *argv[]) {
-	if (argc < 5) {
-		fprintf(stderr, "usage:\n");
-		fprintf(stderr, "       [ls from file   ]  (1) %s f <in>   <out>  <over> <hifac>\n", argv[0]);
-		fprintf(stderr, "       [lomb scargle   ]  (2) %s l <n>    <over> <hifac>\n", argv[0]);
-		fprintf(stderr, "       [lomb sc. timing]  (3) %s L <nmin> <nmax> <ntests>\n\n", argv[0]);
-		fprintf(stderr, "n      : number of data points\n");
-		fprintf(stderr, "nmin   : Smallest data size\n");
-		fprintf(stderr, "nmax   : Largest data size\n");
-		fprintf(stderr, "ntests : Number of runs\n");
-		fprintf(stderr, "over   : oversampling factor\n");
-		fprintf(stderr, "hifac  : high frequency factor\n");
-		exit(EXIT_FAILURE);
+void performManyLSP(FILE *in, dTyp over, dTyp hifac) {
+	int nlightcurves;
+	char filename[200], outname[200];
+	int ncount = fscanf(in, "%d", &nlightcurves);
+	
+	if (ncount == 0) {
+		eprint("provide the number of lightcurves before any filenames.\n");
 	}
+	LOG("read number of lightcurves");
+	for(int fno = 0 ; fno < nlightcurves ; fno++){
+		ncount = fscanf(in, "%s", filename);
+		if (ncount == 0) {
+			eprint("cant read filename number %d.\n",fno + 1);
+		}
+#ifdef DEBUG
+		fprintf(stderr, "Doing lc %d of %d (%s)\n", fno + 1, nlightcurves, filename);
+#endif
+		FILE *in = fopen(filename, "r");
+		sprintf(outname, "%s.lsp", filename);
+		FILE *out = fopen(outname, "w");
+		lombScargleFromLC(in, over, hifac, out);
+		fclose(in);
+		fclose(out);
+	}
+}
 
-	if (argv[1][0] == 'l')
-		testLombScargle(atoi(argv[2]), atof(argv[3]), atof(argv[4]));
-	else if (argv[1][0] == 'L')
-		timeLombScargle(atoi(argv[2]), atoi(argv[3]), atoi(argv[4]));
-	else if (argv[1][0] == 'f') {
-		LOG("opening lightcurve file");
-		FILE *lightcurve_file = fopen(argv[2], "r");
-		FILE *lsp_file        = fopen(argv[3], "w");
-		LOG("calculating lomb scargle");
-		lombScargleFromLC(lightcurve_file, atof(argv[4]), atof(argv[5]), lsp_file);
-		LOG("done.");
-		fclose(lsp_file);
-		fclose(lightcurve_file);
-	}
-	else {
-		fprintf(stderr, "What does %c mean? Should be either 'f', 'l', or 'L'.\n", argv[1][0]);
+int main(int argc, char *argv[]) {
+	FILE *input, *output;
+	if (argc != 5 && argc != 6) {
+		fprintf(stderr, "usage:\n");
+		fprintf(stderr, "       [ls from file   ]  (1) %s f <in>     <out>  <over>  <hifac>\n", argv[0]);
+		fprintf(stderr, "       [list of files  ]  (2) %s F <inlist> <over> <hifac>\n\n", argv[0]);
+		fprintf(stderr, "in      : lightcurve filename\n");
+		fprintf(stderr, "inlist  : filename containing list of lightcurve filenames\n");
+		fprintf(stderr, "          (number of filenames on first line followed by filenames)\n");
+		fprintf(stderr, "out     : filename to store periodogram\n");
+		fprintf(stderr, "outroot : the prefix to the location of the periodograms\n");
+		fprintf(stderr, "over    : oversampling factor\n");
+		fprintf(stderr, "hifac   : high frequency factor\n");
 		exit(EXIT_FAILURE);
+	}
+	switch(argv[1][0]) {
+		case 'f':
+			LOG("LSP from file");
+			input  = fopen(argv[2], "r");
+			output = fopen(argv[3], "w");
+			lombScargleFromLC(input, atof(argv[4]), atof(argv[5]), output);
+			fclose(input);
+			fclose(output);
+			break;
+		case 'F' :
+			LOG("list of lsps");
+			input = fopen(argv[2], "r");
+			performManyLSP(input, atof(argv[3]), atof(argv[4]));
+			fclose(input);
+			break;
+		default:
+			eprint( "What does %c mean? Should be either 'f', 'F'.\n", argv[1][0]);
+			
 	}
 	return EXIT_SUCCESS;
 }

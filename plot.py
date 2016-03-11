@@ -4,46 +4,94 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import os, sys
 
-
-hifac = 4
-over = 50
-period = 0.1
-N = 1000
-sigma = 0.1
-
-x = np.sort(np.random.random(N))
-y = np.cos(2 * np.pi * x / period) + sigma * np.random.normal(N)
-
-f = open("testlc.dat", 'w')
-f.write("%d\n"%N)
-for X, Y in zip(x, y):
-	f.write("%-10e %-10e\n"%(X, Y))
-f.close()
-
-os.system("./test-double f testlc.dat testlsp-double.dat %f %f && ./test-single f testlc.dat testlsp-single.dat %f %f"%(over, hifac, over, hifac))
+OVER = 50
+HIFAC = 4
+SIGMA = 0.1
+PHI = 0.4
+Params = dict( N = 10000, freq = 10., hifac = HIFAC, over = OVER, phi = PHI, sigma = SIGMA, outfile='lsp.dat', binary='test-double', lcfile='lc.dat')
 
 lspdt = np.dtype([ ('f', float), ('p', float)])
+def get_signal(params):
+	x = np.sort(np.random.random(params['N']))
+	y = np.cos(2 * np.pi * x * params['freq'] - params['phi']) + params['sigma'] * np.random.normal(params['N'])
+	return x, y
 
-data = np.loadtxt('testlc.dat', dtype=np.dtype([ ('tobs', float), ('yobs', float) ]), skiprows=1)
+def save_signal(x, y, lcfile='lc.dat'):
+	f = open(lcfile, 'w')
+	f.write('%d\n'%(len(x)))
+	for X, Y in zip(x, y):
+		f.write('%e %e\n'%(X, Y))
+	f.close()
+	
 
-single_lsp = np.loadtxt('testlsp-single.dat', dtype=lspdt)
-double_lsp = np.loadtxt('testlsp-double.dat', dtype=lspdt)
+def get_lsp(x, y, **kwargs):
+	save_signal(x, y, lcfile=kwargs['lcfile'])
+	os.system("./%s f %s %s %f %f"%(kwargs['binary'], kwargs['lcfile'], kwargs['outfile'], kwargs['over'], kwargs['hifac']))
+	return np.loadtxt(kwargs['outfile'], dtype=lspdt)
+
+def get_peak(lsp):
+	i = np.argmax(lsp['p'])
+	return lsp['f'][i]
+
+def get_diff(params):
+	x, y = get_signal(params)
+	return get_peak(get_lsp(x, y, **params)) - params['freq'] 
+
+def test(params, frequencies):
+	diffs = []
+	for f in frequencies:
+		params['freq'] = f
+		diffs.append(get_diff(params))
+	return diffs
+
+def phase_fold(x, freq):
+	return [ X*freq - int(X * freq) for X in x ]
+
+def test_single_double(params):
+	x, y = get_signal(params)
+	fraw, axr = plt.subplots()
+	axr.scatter(phase_fold(x, params['freq']), y, alpha=0.1, marker='.')
+	fraw.savefig('lcraw.png')
+
+	params['binary'] = 'test-single'
+	single_lsp = get_lsp(x, y, **params)
+	params['binary'] = 'test-double'
+	double_lsp = get_lsp(x, y, **params)
+	f, ax = plt.subplots()
+	ax.plot(single_lsp['f'], single_lsp['p'], label='single', color='r', ls=':', alpha=0.5)
+	ax.plot(double_lsp['f'], double_lsp['p'], label='double', color='k', alpha=0.5)
+	ax.legend(loc='best')
+	d = 0.1
+	ax.set_xlim(params['freq'] * ( 1 - d ), params['freq'] * (1 + d))
+	ax.set_ylim(0, 1.5 * max(double_lsp['p']))
+	ax.axvline(params['freq'], color='b', ls='--')
+
+	f.savefig('compare.png')
 
 
-fraw, axr = plt.subplots()
-axr.scatter(data['tobs']/period - np.array([ int(t/period) for t in data['tobs'] ]), data['yobs'], alpha=0.1, marker='.')
+Nlcs = 10
+def test_list_of_files(params):
+	l = open("list.dat",'w')
+	l.write("%d\n"%(Nlcs))
+	for i in range(	Nlcs ):
+		x, y = get_signal(params)
+		fname = "lcs/lc%04d.lc"%(i)
+		
+		save_signal(x, y, fname)
+		l.write("%s\n"%fname)
+	l.close()	
+	
+	os.system("./%s F list.dat %e %e"%(params['binary'], params['over'], params['hifac']))
 
-fraw.savefig('lc.png')
-
-f, ax = plt.subplots()
-ax.plot(single_lsp['f'], single_lsp['p'], label='single', color='r', ls=':', alpha=0.5)
-ax.plot(double_lsp['f'], double_lsp['p'], label='double', color='k', alpha=0.5)
-ax.legend(loc='best')
-#ax.set_xscale('log')
-d = 0.1
-ax.set_xlim((1./period ) * ( 1 - d ), (1./period) * (1 + d))
-ax.set_ylim(0, 1.5 * max(double_lsp['p']))
-ax.axvline(1./period, color='b', ls='--')
-
-f.savefig('compare.png')
+test_single_double(Params)
+#test_list_of_files(Params)
+#freqs = np.logspace(0, 2, 10)
+#diffs = test(Params, freqs)
+#print diffs
+#reldiffs = [ dF / F0 for F0,dF in zip(freqs, diffs) ]
+#print reldiffs
+#print np.mean(reldiffs), np.std(reldiffs), 
+#print [ d * Params['over'] for d in diffs ]
+ 
+#test_single_double(Params)
 
