@@ -4,10 +4,9 @@
 ### jah5@princeton.edu
 
 ##### Requires 
-* [CUDA](https://developer.nvidia.com/cuda-toolkit) and compatible GPU(s)
-	* Developed using the `CUDA-7.5` toolkit.
-* [CUNA](https://github.com/johnh2o2/cunfft_adjoint)
-* [Argtable2](http://argtable.sourceforge.net/)
+* [CUDA](https://developer.nvidia.com/cuda-toolkit) and compatible GPU(s); developed using the `CUDA-7.5` toolkit
+* [CUNA](https://github.com/johnh2o2/cunfft_adjoint): CUDA implementation of the NFFT adjoint operation
+* [Argtable2](http://argtable.sourceforge.net/): to read command line arguments
 
 Uses the Non-equispaced Fast Fourier Transform (adjoint) to 
 efficiently compute the Lomb-Scargle periodogram; this implements
