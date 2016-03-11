@@ -19,17 +19,32 @@ the algorithm discussed in
 
 and borrows extensively from the associated codebase.
 
+#### Command line options
+
+```
+./cunfftls 
+
+ --in=<filename_in>        input file
+ --list-in=<list_in>       filename containing list of input files
+ --out=<filename_out>      output file
+ --list-out=<list_out>     filename to save peak LSP for each lightcurve
+ --over=<oversampling>     oversample factor
+ --hifac=<hifac>           max frequency = hifac * nyquist frequency
+ --device=<device>         device number
+ --pow2, --power-of-two    Force nfreqs to be a power of 2
+ --print-timing            Print calculation times
+ -v, --verbose             more output
+ -s, --save-maxp           Save max(LSP) for all lightcurves
+ -d, --dont-save-lsp       do not save full LSP
+ ```
+
 #### Mode 1: single lightcurve
 **Usage**:
 
 ```
-./cunfftls f input_file output_file over hifac
-```
+./cunfftls --in=<filename_in> --out=<filename_out> [OPTS]
 
-Where `input_file` is the path to the lightcurve, `output_file`
-is the location to save the periodogram, `over` is an oversampling
-parameter (multiplicative factor in the frequency resolution),
-and `hifac` is a multiplicative factor in the maximum frequency cutoff.
+```
 
 Lightcurves are expected to be in the form:
 
@@ -47,12 +62,8 @@ where `N` is the number of observations in the lightcurve.
 **Usage**
 
 ```
-./cunfftls F input_file over hifac
+./cunfftls --list-in=<list_in> [OPTS]
 ```
-
-Where `input_file` is the path to the file containing a list of
-lightcurve locations, `over` is the oversampling factor, and
-`hifac` is a high frequency cutoff factor.
 
 The file containing the list of lightcurves is expected to be
 in the form:
