@@ -1,8 +1,11 @@
-/** \file lombScargle.c
- * CUDA implementation of the LombScargle algorithm
+/* cunfftls_periodogram.cu
+ * =======================
+ * CUDA implementation of the Lomb-Scargle periodogram
+ * 
  * depends on the cunfft_adjoint library
  * 
- * \author John Hoffman + B. Leroy
+ * (c) 2016, John Hoffman 
+ * code borrowed extensively from B. Leroy's nfftls
  *
  * This file is part of cunfftls.
  *
@@ -19,32 +22,21 @@
  * You should have received a copy of the GNU General Public License
  * along with cunfftls.  If not, see <http://www.gnu.org/licenses/>.
  *
- * Copyright (C) 2016 J. Hoffman
+ * Copyright (C) 2016 J. Hoffman, 2012 B. Leroy [nfftls]
  */
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include <cuda.h>
 #include <cuComplex.h>
 
 #include "cuna.h"
-#include "cuna_typedefs.h"
-#include "ls_utils.h"
+#include "cunfftls_typedefs.h"
+#include "cunfftls_utils.h"
 
-#define START_TIMER if(flags & PRINT_TIMING) start = clock()
-#define STOP_TIMER(name)  if(flags & PRINT_TIMING)\
-      fprintf(stderr, "[ lombScargle ] %-20s : %.4e(s)\n", #name, seconds(clock() - start))
-#define EPSILON 1e-5
 
-#ifdef DOUBLE_PRECISION
-#define cuAtan atan
-#else
-#define cuAtan atanf
-#endif
-
-__global__
-void
+// CUDA kernel for converting spectral/window functions to LSP
+__global__ void
 convertToLSP( const Complex *sp, const Complex *win, dTyp var, int m, int npts, dTyp *lsp) {
 
   int j = blockIdx.x * BLOCK_SIZE + threadIdx.x;
@@ -53,10 +45,6 @@ convertToLSP( const Complex *sp, const Complex *win, dTyp var, int m, int npts, 
     Complex z1 = sp[ j + 1 ];
     Complex z2 = win[ 2 * (j + 1) ];
     dTyp invhypo = 1./cuAbs(z2);
-    // switched cuImag(z2) -> cuReal(z2)
-//    dTyp hc2wt = 0.5 * cuReal(z2) * invhypo;
-    // switched cuReal(z2) -> cuImag(z2)
-//    dTyp hs2wt = 0.5 * cuImag(z2) * invhypo;
     dTyp Sy = cuImag(z1);
     dTyp S2 = cuImag(z2);
     dTyp Cy = cuReal(z1);
@@ -66,10 +54,12 @@ convertToLSP( const Complex *sp, const Complex *win, dTyp var, int m, int npts, 
     dTyp cwtau = cuSqrt( 0.5 + hc2wtau);
     dTyp swtau = cuSqrt( 0.5 - hc2wtau);
     if( S2 < 0 ) swtau *= -1;
+    dTyp ycoswt_tau = Cy * cwtau + Sy * swtau;
+    dTyp ysinwt_tau = Sy * cwtau - Cy * swtau;
     dTyp cos2wttau = 0.5 * m + hc2wtau * C2 + hs2wtau * S2;
     dTyp sin2wttau = 0.5 * m - hc2wtau * C2 - hs2wtau * S2;
-    dTyp cterm = square(Cy) / cos2wttau;
-    dTyp sterm = square(Sy) / sin2wttau;
+    dTyp cterm = square(ycoswt_tau) / cos2wttau;
+    dTyp sterm = square(ysinwt_tau) / sin2wttau;
     lsp[j] = (cterm + sterm) / (2 * var);
     /*
     dTyp c2ttau = 0.5 * npts + 0.5 * C2 * (C2 * invhypo) + 0.5 * Sy 
@@ -85,19 +75,19 @@ convertToLSP( const Complex *sp, const Complex *win, dTyp var, int m, int npts, 
   }
 }
 
-__host__
-dTyp *
-scaleTobs(const dTyp *tobs, int npts, dTyp oversampling) {
+// ensures observed times are in [-1/2, 1/2)
+__host__ dTyp *
+scaleTobs(const dTyp *tobs, int npts, dTyp over) {
 
   // clone data
   dTyp * t = (dTyp *)malloc(npts * sizeof(dTyp));
 
   // now transform t -> [-1/2, 1/2)
-  dTyp tmax  = tobs[npts - 1];
-  dTyp tmin  = tobs[0];
-
-  dTyp invrange = 1./((tmax - tmin) * oversampling);
-  dTyp a     = 0.5 - EPSILON;
+  dTyp tmax     = tobs[npts - 1];
+  dTyp tmin     = tobs[0];
+  
+  dTyp invrange = 1./((tmax - tmin) * over);
+  dTyp a        = 0.5 - EPSILON;
 
   for(int i = 0; i < npts; i++) 
     t[i] = 2 * a * (tobs[i] - tmin) * invrange - a;
@@ -106,8 +96,8 @@ scaleTobs(const dTyp *tobs, int npts, dTyp oversampling) {
 }
 
 
-__host__
-dTyp *
+// subtracts mean from observations
+__host__ dTyp *
 scaleYobs(const dTyp *yobs, int npts, dTyp *var) {
   dTyp avg;
   meanAndVariance(npts, yobs, &avg, var);
@@ -119,10 +109,11 @@ scaleYobs(const dTyp *yobs, int npts, dTyp *var) {
   return y;
 }
 
-__host__ 
-dTyp *
+// computes + returns pointer to periodogram
+__host__  dTyp *
 lombScargle(const dTyp *tobs, const dTyp *yobs, int npts, 
-            dTyp over, dTyp hifac, int * ng, unsigned int flags) {
+            Settings *settings) {
+
   clock_t start;
   // allocate memory for NFFT
   // Note: the LSP calculations can be done more efficiently by
@@ -131,63 +122,59 @@ lombScargle(const dTyp *tobs, const dTyp *yobs, int npts,
   plan *p  = (plan *)malloc(sizeof(plan));
 
   // size of LSP
-  unsigned int NG = (unsigned int) floor(0.5 * npts * over * hifac);
-
-  // round to the next power of two
-  *ng = (int) nextPowerOfTwo(NG);
-
-  // correct the "oversampling" parameter accordingly
-  over *= ((float) (*ng))/((float) NG);
+  settings->nfreqs = (int) (0.5 * npts
+			                * settings->over * settings->hifac);
 
   // scale t and y (zero mean, t \in [-1/2, 1/2))
   dTyp var;
-  dTyp *t = scaleTobs(tobs, npts, over);
+  dTyp *t = scaleTobs(tobs, npts, settings->over);
   dTyp *y = scaleYobs(yobs, npts, &var);
 
   // initialize plans with scaled arrays
-  unsigned int our_flags = flags;
+  unsigned int our_flags = settings->nfft_flags;
   if (!(our_flags & CALCULATE_WINDOW_FUNCTION))
      our_flags |= CALCULATE_WINDOW_FUNCTION;
   if (!(our_flags & DONT_TRANSFER_TO_CPU))
      our_flags |= DONT_TRANSFER_TO_CPU;
 
   START_TIMER;
-  init_plan(p , t, y   , npts, 2 * (*ng), our_flags);
-  STOP_TIMER("init_plan");
+  init_plan(p , t, y   , npts, 2 * settings->nfreqs, our_flags);
+  STOP_TIMER("init_plan", start);
 
   // evaluate NFFT for window + signal
   START_TIMER;
   cunfft_adjoint_from_plan(p);
-  STOP_TIMER("cuda_nfft_adjoint");
+  STOP_TIMER("cuda_nfft_adjoint", start);
 
   // allocate GPU memory for lsp
   dTyp *d_lsp;
   checkCudaErrors(
-    cudaMalloc((void **) &d_lsp, (*ng) * sizeof(dTyp))
+    cudaMalloc((void **) &d_lsp, settings->nfreqs * sizeof(dTyp))
   );
   
   // calculate number of CUDA blocks we need
-  int nblocks = *ng / BLOCK_SIZE;
-  while (nblocks * BLOCK_SIZE < *ng) nblocks++;
+  int nblocks = settings->nfreqs / BLOCK_SIZE;
+  while (nblocks * BLOCK_SIZE < settings->nfreqs) nblocks++;
   
   // convert to LSP
   START_TIMER;
   convertToLSP <<< nblocks, BLOCK_SIZE >>> 
-           (p->g_f_hat, p->g_f_hat_win, var, (*ng), npts, d_lsp);
-  STOP_TIMER("convertToLSP");
+           (p->g_f_hat, p->g_f_hat_win, var, settings->nfreqs, npts, d_lsp);
+  STOP_TIMER("convertToLSP", start);
 
   // Copy the results back to CPU memory
   START_TIMER;
-  dTyp *lsp = (dTyp *) malloc( (*ng) * sizeof(dTyp) );
+  dTyp *lsp = (dTyp *) malloc( settings->nfreqs * sizeof(dTyp) );
   checkCudaErrors(
-    cudaMemcpy(lsp, d_lsp, (*ng) * sizeof(dTyp), cudaMemcpyDeviceToHost)
+    cudaMemcpy(lsp, d_lsp, settings->nfreqs * sizeof(dTyp), cudaMemcpyDeviceToHost)
   )
-  STOP_TIMER("malloc + memcpy lsp");
+  STOP_TIMER("malloc + memcpy lsp", start);
 
   return lsp;
 
 }
 
+// below is taken directly from nfftls (B. Leroy)
 /**
  * Returns the probability that a peak of a given power
  * appears in the periodogram when the signal is white

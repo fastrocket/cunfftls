@@ -24,11 +24,13 @@ BUILDDIR=.
 LIBDIR=.
 BINDIR=.
 
-#OPTIMIZE_CPU=
-#OPTIMIZE_GPU=
+OPTIMIZE_CPU=
+OPTIMIZE_GPU=
+DEBUG=
+#DEBUG=-DDEBUG
 OPTIMIZE_CPU= -O3
 OPTIMIZE_GPU= -Xcompiler -O3 --use_fast_math
-DEFS := -DBLOCK_SIZE=$(BLOCK_SIZE) -DVERSION=\"$(VERSION)\"
+DEFS := $(DEBUG) -DBLOCK_SIZE=$(BLOCK_SIZE) -DVERSION=\"$(VERSION)\"
 NVCCFLAGS := $(DEFS) $(OPTIMIZE_GPU) -Xcompiler -fpic --gpu-architecture=compute_$(ARCH) --gpu-code=sm_$(ARCH),compute_$(ARCH) 
 CFLAGS := $(DEFS) -fPIC -Wall $(OPTIMIZE_CPU)
 
@@ -66,9 +68,9 @@ double : lib$(NAME)d.so
 	$(CC) -shared -o $(LIBDIR)/$@ $^ $(LIBS) -lcunad
 
 $(NAME)f :
-	$(CC) $(CFLAGS) $(INCLUDE) -o $(BINDIR)/$@ main.cpp $(LIBS) -l$(NAME)f -lcunaf
+	$(CC) $(CFLAGS) $(INCLUDE) -o $(BINDIR)/$@ main.cpp $(LIBS) -l$(NAME)f -lcunaf -largtable2
 $(NAME)d :
-	$(CC) $(CFLAGS) $(INCLUDE) -DDOUBLE_PRECISION -o $(BINDIR)/$@ main.cpp $(LIBS) -l$(NAME)d -lcunad
+	$(CC) $(CFLAGS) $(INCLUDE) -DDOUBLE_PRECISION -o $(BINDIR)/$@ main.cpp $(LIBS) -l$(NAME)d -lcunad -largtable2
 
 %-single.o : $(CU_OBJ_FILES_SINGLE)
 	$(NVCC) $(NVCCFLAGS) $(INCLUDE) -dlink $^ -o $@
