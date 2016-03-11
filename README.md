@@ -33,7 +33,7 @@ where `N` is the number of observations in the lightcurve.
 **Usage**
 
 ```
-./cunfftls f input_file over hifac
+./cunfftls F input_file over hifac
 ```
 
 Where `input_file` is the path to the file containing a list of
