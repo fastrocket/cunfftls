@@ -47,7 +47,8 @@
     if(settings->lsp_flags & TIMING) start = clock()
 #define STOP_TIMER(label, start)\
     if(settings->lsp_flags & TIMING)\
-        fprintf(stderr, "[ %-50s L%-5d ] %-30s : %.4e(s)\n", __FILE__, __LINE__, #label, seconds(clock() - start))
+        fprintf(stderr, "[ %-50s L%-5d ] %-30s : %.4e(s)\n", __FILE__,\
+         __LINE__, #label, seconds(clock() - start))
 ///////////////////
 
 // small number for scaling the observed times

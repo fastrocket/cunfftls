@@ -6,9 +6,9 @@ import os, sys
 
 OVER = 5
 HIFAC = 2
-SIGMA = 1.0
+SIGMA = 4.0
 PHI = 0.4
-Params = dict( jitter = 0, N = 1000, freq = 100., hifac = HIFAC, over = OVER, phi = PHI, sigma = SIGMA, outfile='lsp.dat', binary='cunfftlsd', lcfile='lc.dat')
+Params = dict( jitter = 0, N = 10000, freq = 100., hifac = HIFAC, over = OVER, phi = PHI, sigma = SIGMA, outfile='lsp.dat', binary='cunfftlsd', lcfile='lc.dat')
 
 lspdt = np.dtype([ ('f', float), ('p', float)])
 

@@ -3,7 +3,11 @@
 ### (c) 2016, John Hoffman
 ### jah5@princeton.edu
 
-Requires [CUNA](https://github.com/johnh2o2/cunfft_adjoint).
+##### Requires 
+* [CUDA](https://developer.nvidia.com/cuda-toolkit) and compatible GPU(s)
+	* Developed using the `CUDA-7.5` toolkit.
+* [CUNA](https://github.com/johnh2o2/cunfft_adjoint)
+* [Argtable2](http://argtable.sourceforge.net/)
 
 Uses the Non-equispaced Fast Fourier Transform (adjoint) to 
 efficiently compute the Lomb-Scargle periodogram; this implements
@@ -77,4 +81,7 @@ path/to/lc2.dat
 
 where `N` is the number of lightcurves in the list.
 
+#### Benchmarking
+
+[coming soon...]
 

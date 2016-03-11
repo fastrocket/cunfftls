@@ -50,7 +50,6 @@ dTyp * getFrequencies(dTyp *x, int npts, Settings *settings) {
 	
 	// df = nyquist frequency / over
 	dTyp df = 1. / (settings->over * range);
-	//fprintf(stderr, "df = %.5e, nf = %d, over = %.3e, hifac = %.3e\n", df, settings->nfreqs, settings->over, settings->hifac);
 
 	// allocate frequency array
 	dTyp *freqs = (dTyp *)malloc(settings->nfreqs * sizeof(dTyp));
@@ -87,7 +86,9 @@ void readLC(FILE *in, dTyp **tobs, dTyp **yobs, int *npts) {
 	for(int i = 0; i < *npts; i++) {
 		nfound = fscanf(in, FORMAT, (*tobs) + i, (*yobs) + i);	
 		if (nfound < 2) {
-			eprint("could not read line %d of lc file (only %d found), t[i] = %lf, y[i] = %lf\n",i+1, nfound, (*tobs)[i], (*yobs)[i]);
+			eprint("could not read line %d of "
+				"lc file (only %d found), t[i] = %lf, y[i] = %lf\n",
+				i+1, nfound, (*tobs)[i], (*yobs)[i]);
 		}
 	}
 }
@@ -197,7 +198,7 @@ void multipleLombScargle(Settings *settings) {
 
 		// open lsp file if we're saving the LSP
 		if (settings->lsp_flags & SAVE_FULL_LSP) {
-			// write filename (TODO: allow user to customize where we save the results)
+			// write filename (TODO: allow user to customize)
 			sprintf(settings->filename_out, "%s.lsp", settings->filename_in);
 
 			// open lsp file

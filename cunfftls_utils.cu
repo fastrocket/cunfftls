@@ -54,8 +54,6 @@ __host__ void getNfreqsAndCorrOversampling(int npts, Settings *settings){
    settings->nfreqs = (int) nextPowerOfTwo(floor(nfreqsr));
    settings->over  *= settings->nfreqs / nfreqsr;
 
-   //fprintf(stderr, "nfreqsr = %.5e, poweof2 = %.5e, nfreqs = %d\n", nfreqsr, nextPowerOfTwo(nfreqsr), settings->nfreqs);
-
 }
 
 __global__ void
