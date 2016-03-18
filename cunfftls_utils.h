@@ -49,10 +49,4 @@ __device__ dTyp square(dTyp a);
 // converts clock_t value into seconds
 __host__ dTyp seconds(clock_t dt);
 
-// CUDA doesn't have a native atomic function if the variables are
-// double precision, so we add an override here if we're doing double prec.
-#ifdef DOUBLE_PRECISION
-__device__ double atomicAdd(double* address, double val);
-#endif
-
 #endif

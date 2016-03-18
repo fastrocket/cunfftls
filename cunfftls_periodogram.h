@@ -34,4 +34,7 @@ lombScargle(const dTyp *tobs, const dTyp *yobs, int npts,
 
 __host__ dTyp 
 probability(dTyp Pn, int npts, int nfreqs, dTyp over);
+
+__host__ dTyp 
+logProba(dTyp Pn, int npts, int nfreqs, dTyp over);
 #endif

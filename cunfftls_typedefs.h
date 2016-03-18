@@ -64,6 +64,7 @@ typedef enum {
 	FORCE_POWER_OF_TWO = 0x04,
 	TIMING = 0x08,
 	VERBOSE = 0x10,
+	SAVE_IF_SIGNIFICANT = 0x20
 } LSP_FLAGS;
 
 // settings 
@@ -73,8 +74,8 @@ typedef struct {
 	char filename_in     [STRBUFFER];
 	char filename_out    [STRBUFFER];
 	char filename_outlist[STRBUFFER];
-	int device, nfreqs;
-	dTyp over, hifac, df;
+	int device, nfreqs, nthreads;
+	dTyp over0, over, hifac, df, fthresh;
 	unsigned int nfft_flags;
 	unsigned int lsp_flags;
 } Settings;

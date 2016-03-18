@@ -16,7 +16,7 @@ CUNA_DIR=
 #../cunfft_adjoint
 CUDA_VERSION=7.5
 BLOCK_SIZE=256
-VERSION=1.0
+VERSION=1.2
 
 SRCDIR=.
 HEADERDIR=.
@@ -24,21 +24,21 @@ BUILDDIR=.
 LIBDIR=.
 BINDIR=.
 
-OPTIMIZE_CPU=
-OPTIMIZE_GPU=
+#OPTIMIZE_CPU=
+#OPTIMIZE_GPU=
 DEBUG=
 #DEBUG=-DDEBUG
 OPTIMIZE_CPU= -O3
 OPTIMIZE_GPU= -Xcompiler -O3 --use_fast_math
 DEFS := $(DEBUG) -DBLOCK_SIZE=$(BLOCK_SIZE) -DVERSION=\"$(VERSION)\"
-NVCCFLAGS := $(DEFS) $(OPTIMIZE_GPU) -Xcompiler -fpic --gpu-architecture=compute_$(ARCH) --gpu-code=sm_$(ARCH),compute_$(ARCH) 
-CFLAGS := $(DEFS) -fPIC -Wall $(OPTIMIZE_CPU)
+NVCCFLAGS := $(DEFS) $(OPTIMIZE_GPU) -Xcompiler -fopenmp -Xcompiler -fpic --gpu-architecture=compute_$(ARCH) --gpu-code=sm_$(ARCH),compute_$(ARCH) 
+CFLAGS := $(DEFS) -fPIC -fopenmp -Wall $(OPTIMIZE_CPU)
 
 CUDA_LIBS =`pkg-config --libs cudart-$(CUDA_VERSION)` 
 
 CUDA_INCLUDE =`pkg-config --cflags cudart-$(CUDA_VERSION)`
 
-LIBS := -L$(LIBDIR) -L$(CUNA_DIR)/lib $(CUDA_LIBS) -lm
+LIBS := -L$(LIBDIR) -L$(CUNA_DIR)/lib $(CUDA_LIBS) -lm -lgomp
 
 ###############################################################################
 
@@ -56,6 +56,10 @@ CU_OBJ_FILES_DOUBLE := $(CU_FILES:%.cu=$(BUILDDIR)/%d.o)
 INCLUDE := $(CUDA_INCLUDE) -I$(HEADERDIR) -I$(CUNA_DIR)/inc
 
 all : single double $(NAME)f $(NAME)d
+
+install : all
+	sudo cp cunfftlsf /usr/local/bin/cunfftls
+	sudo cp libcunfftlsf.so /usr/local/lib/
 
 single : lib$(NAME)f.so
 double : lib$(NAME)d.so

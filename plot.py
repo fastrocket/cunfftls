@@ -1,6 +1,4 @@
 import numpy as np
-import matplotlib
-#matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import os, sys
 
@@ -8,7 +6,12 @@ OVER = 5
 HIFAC = 2
 SIGMA = 4.0
 PHI = 0.4
-Params = dict( jitter = 0, N = 10000, freq = 100., hifac = HIFAC, over = OVER, phi = PHI, sigma = SIGMA, outfile='lsp.dat', binary='cunfftlsd', lcfile='lc.dat')
+Params = dict( jitter = 0, N = 10000, freq = 100., 
+		hifac = HIFAC,       over = OVER, phi = PHI, 
+		sigma = SIGMA,     outfile='lsp.dat', 
+		binary='cunfftlsf', lcfile='lc.dat',
+		nthreads = 4
+	)
 
 lspdt = np.dtype([ ('f', float), ('p', float)])
 
@@ -38,7 +41,10 @@ def save_signal(x, y, lcfile='lc.dat'):
 
 def get_lsp(x, y, **kwargs):
 	save_signal(x, y, lcfile=kwargs['lcfile'])
-	os.system("./%s --in=%s --out=%s --over=%f --hifac=%f --print-timing"%(kwargs['binary'], kwargs['lcfile'], kwargs['outfile'], kwargs['over'], kwargs['hifac']))
+	command = "./%s --in=%s --out=%s --over=%f --hifac=%f --nthreads=%d --print-timing"%(kwargs['binary'], 
+			kwargs['lcfile'], kwargs['outfile'], kwargs['over'], kwargs['hifac'], kwargs['nthreads'])
+	print command
+	os.system(command)
 	return np.loadtxt(kwargs['outfile'], dtype=lspdt)
 
 def get_peak(lsp):
@@ -58,6 +64,7 @@ def test(params, frequencies):
 
 def phase_fold(x, freq):
 	return [ X*freq - int(X * freq) for X in x ]
+
 
 def test_single_double(params):
 	x, y = get_signal(params)
@@ -82,8 +89,17 @@ def test_single_double(params):
 
 	plt.show()
 
+def plot_lsp(lsp, title=None, fname='lsp.png', params=None):
+	f, ax = plt.subplots()
+	ax.plot(lsp['f'], lsp['p'], color='k', alpha=0.5)
+	ax.axvline(params['freq'], color='b', ls='--')
+	ax.set_xlabel('freq')
+	ax.set_ylabel('ls power')
+	if not title is None:
+		f.suptitle(title)
+	f.savefig(fname)
 
-Nlcs = 10
+Nlcs = 1000
 def test_list_of_files(params):
 	l = open("list.dat",'w')
 	l.write("%d\n"%(Nlcs))
@@ -95,10 +111,37 @@ def test_list_of_files(params):
 		l.write("%s\n"%fname)
 	l.close()	
 	
-	os.system("./%s --list-in=list.dat --over=%e --hifac=%e --list-out=outlist.dat --print-timing"%(params['binary'], params['over'], params['hifac']))
+	command = "./%s --list-in=list.dat --over=%e --hifac=%e --list-out=outlist.dat --dont-save-lsp --save-maxp --nthreads=%d"%(
+				params['binary'], params['over'], params['hifac'], params['nthreads'])
+	print command
+	os.system(command)
+	
+def make_lc_with_gaps(params):
+	x, y = get_signal(params)
+	inds = range(len(x)/4)
+	inds.extend(range(len(x)/2, len(x)))
+	mask = [ True if i in inds else False for i in range(len(x)) ]
+	
+	return [ X for i,X in enumerate(x) if mask[i] ], [ Y for i, Y in enumerate(y) if mask[i] ]
 
+def test_gap(params):
+	x, y = make_lc_with_gaps(params)
+	f, ax = plt.subplots()
+	#p = phase_fold(x, params['freq'])
+	ax.scatter(x, y, alpha=0.5, color='k', marker=',')
+	f.savefig("raw_gap.png")
+
+	lsp = get_lsp(x, y, **params)
+	plot_lsp(lsp, title='gap', fname='lsp_gap.png', params=params)
+
+print "TESTING SINGLE AND DOUBLE PRECISION"
 test_single_double(Params)
+
+print "TESTING LIST OF FILES"
 test_list_of_files(Params)
+
+#print "TESTING GAP"
+#test_gap(Params)
 #freqs = np.logspace(0, 2, 10)
 #diffs = test(Params, freqs)
 #print diffs

@@ -31,6 +31,7 @@
 #include <cuComplex.h>
 
 #include "cuna.h"
+#include "cuna_filter.h"
 #include "cunfftls_typedefs.h"
 #include "cunfftls_utils.h"
 
@@ -56,8 +57,9 @@ convertToLSP( const Complex *sp, const Complex *win, dTyp var, int m, int npts, 
     if( S2 < 0 ) swtau *= -1;
     dTyp ycoswt_tau = Cy * cwtau + Sy * swtau;
     dTyp ysinwt_tau = Sy * cwtau - Cy * swtau;
-    dTyp cos2wttau = 0.5 * m + hc2wtau * C2 + hs2wtau * S2;
-    dTyp sin2wttau = 0.5 * m - hc2wtau * C2 - hs2wtau * S2;
+    dTyp sum = hc2wtau * C2 + hs2wtau * S2;
+    dTyp cos2wttau = 0.5 * m + sum;
+    dTyp sin2wttau = 0.5 * m - sum;
     dTyp cterm = square(ycoswt_tau) / cos2wttau;
     dTyp sterm = square(ysinwt_tau) / sin2wttau;
     lsp[j] = (cterm + sterm) / (2 * var);
@@ -115,60 +117,82 @@ lombScargle(const dTyp *tobs, const dTyp *yobs, int npts,
             Settings *settings) {
 
   clock_t start;
-  // allocate memory for NFFT
-  // Note: the LSP calculations can be done more efficiently by
-  //       bypassing the cuda-nfft plan system 
-  //       since there are redundant transfers/allocations
-  plan *p  = (plan *)malloc(sizeof(plan));
+  int ng = settings->nfreqs * 2;
 
-  // size of LSP
-  settings->nfreqs = (int) (0.5 * npts
-			                * settings->over * settings->hifac);
-
+  START_TIMER;
   // scale t and y (zero mean, t \in [-1/2, 1/2))
   dTyp var;
   dTyp *t = scaleTobs(tobs, npts, settings->over);
   dTyp *y = scaleYobs(yobs, npts, &var);
-
-  // initialize plans with scaled arrays
-  unsigned int our_flags = settings->nfft_flags;
-  if (!(our_flags & CALCULATE_WINDOW_FUNCTION))
-     our_flags |= CALCULATE_WINDOW_FUNCTION;
-  if (!(our_flags & DONT_TRANSFER_TO_CPU))
-     our_flags |= DONT_TRANSFER_TO_CPU;
-
-  START_TIMER;
-  init_plan(p , t, y   , npts, 2 * settings->nfreqs, our_flags);
-  STOP_TIMER("init_plan", start);
-
-  // evaluate NFFT for window + signal
-  START_TIMER;
-  cunfft_adjoint_from_plan(p);
-  STOP_TIMER("cuda_nfft_adjoint", start);
-
-  // allocate GPU memory for lsp
-  dTyp *d_lsp;
-  checkCudaErrors(
-    cudaMalloc((void **) &d_lsp, settings->nfreqs * sizeof(dTyp))
-  );
+  STOP_TIMER("scale x and y axes", start);
   
+  dTyp *lsp = (dTyp *) malloc((ng/2) * sizeof(dTyp));
+
+
+  START_TIMER;
+  // declare 
+  dTyp *d_t, *d_y, *d_ygrid, *d_lsp;
+  Complex *d_f_hat, *d_f_hat_win;
+
+  // allocate
+  checkCudaErrors(cudaMalloc((void **) &d_t,           npts * sizeof(dTyp)));
+  checkCudaErrors(cudaMalloc((void **) &d_y,           npts * sizeof(dTyp)));
+  checkCudaErrors(cudaMalloc((void **) &d_ygrid,     2 * ng * sizeof(dTyp))); // shared with window
+  checkCudaErrors(cudaMalloc((void **) &d_lsp,       (ng/2) * sizeof(dTyp)));
+  checkCudaErrors(cudaMalloc((void **) &d_f_hat,         ng * sizeof(Complex)));
+  checkCudaErrors(cudaMalloc((void **) &d_f_hat_win, 2 * ng * sizeof(Complex)));
+
+  // memset
+  checkCudaErrors(cudaMemset(d_ygrid,       0, 2 * ng * sizeof(dTyp)));
+  //checkCudaErrors(cudaMemset(d_lsp,         0, (ng/2) * sizeof(dTyp)));
+  //checkCudaErrors(cudaMemset(d_f_hat,       0,     ng * sizeof(Complex)));
+  //checkCudaErrors(cudaMemset(d_f_hat_win,   0, 2 * ng * sizeof(Complex)));
+  STOP_TIMER("cuda malloc all gpu vars", start);
+  
+  
+  // transfer data to gpu
+  START_TIMER;
+  checkCudaErrors(cudaMemcpy(d_t, t, npts * sizeof(dTyp), cudaMemcpyHostToDevice));
+  checkCudaErrors(cudaMemcpy(d_y, y, npts * sizeof(dTyp), cudaMemcpyHostToDevice));
+  STOP_TIMER("transfer data to device", start);
+
+  // generate filter
+  START_TIMER;
+  filter_properties *fprops_host, *fprops_device;
+  generate_filter_properties(d_t, npts, ng, &fprops_host, &fprops_device); 
+  STOP_TIMER("generate filter properties", start);
+
+  // evaluate NFFT for signal & window
+  START_TIMER;
+  cunfft_adjoint_raw(d_t, d_y,  d_ygrid, d_f_hat,     npts,     ng, fprops_device);
+  checkCudaErrors(cudaMemset(d_ygrid,       0, ng * sizeof(dTyp)));
+  cunfft_adjoint_raw(d_t, NULL, d_ygrid, d_f_hat_win, npts, 2 * ng, fprops_device); 
+  STOP_TIMER("cunfft_adjoint_raw", start);
+
   // calculate number of CUDA blocks we need
-  int nblocks = settings->nfreqs / BLOCK_SIZE;
-  while (nblocks * BLOCK_SIZE < settings->nfreqs) nblocks++;
+  int nblocks = (ng/2) / BLOCK_SIZE;
+  while (nblocks * BLOCK_SIZE < (ng/2)) nblocks++;
   
   // convert to LSP
   START_TIMER;
   convertToLSP <<< nblocks, BLOCK_SIZE >>> 
-           (p->g_f_hat, p->g_f_hat_win, var, settings->nfreqs, npts, d_lsp);
+           (d_f_hat, d_f_hat_win, var, ng/2, npts, d_lsp);
   STOP_TIMER("convertToLSP", start);
 
   // Copy the results back to CPU memory
   START_TIMER;
-  dTyp *lsp = (dTyp *) malloc( settings->nfreqs * sizeof(dTyp) );
-  checkCudaErrors(
-    cudaMemcpy(lsp, d_lsp, settings->nfreqs * sizeof(dTyp), cudaMemcpyDeviceToHost)
-  )
+  checkCudaErrors(cudaMemcpy(lsp, d_lsp, (ng/2) * sizeof(dTyp), cudaMemcpyDeviceToHost));
   STOP_TIMER("malloc + memcpy lsp", start);
+
+  // Free memory
+  free(t);
+  free(y);
+  checkCudaErrors(cudaFree(d_lsp));
+  checkCudaErrors(cudaFree(d_ygrid));
+  checkCudaErrors(cudaFree(d_y));
+  checkCudaErrors(cudaFree(d_t));
+  checkCudaErrors(cudaFree(d_f_hat_win));
+  checkCudaErrors(cudaFree(d_f_hat));
 
   return lsp;
 
@@ -199,6 +223,17 @@ probability(dTyp Pn, int npts, int nfreqs, dTyp over)
   dTyp Ix = 1.0 - pow(1 - 2 * Pn / npts, 0.5 * (npts - 3));
 
   dTyp proba = 1 - pow(Ix, effm);
+  if (proba < EPSILON) 
+	proba = effm * pow( 1 - 2 * Pn / npts, 0.5 * (npts - 3));
   
   return proba;
+}
+
+__host__ dTyp logProba(dTyp Pn, int npts, int nfreqs, dTyp over) {
+  dTyp proba = probability(Pn, npts, nfreqs, over);
+  
+  if (proba < EPSILON)
+	return log10(2) + log10(nfreqs) - log10(over) + 0.5 * (npts - 3) * (log10(npts - 2 * Pn) - log10(npts));
+  else
+	return log10(proba);
 }

@@ -30,6 +30,9 @@
 #include <complex.h>
 #include <argtable2.h>
 #include <string.h>
+#include <omp.h>
+#include <cuda.h>
+#include <cuda_profiler_api.h>
 
 #include "cuna.h"
 #include "cuna_utils.h"
@@ -41,12 +44,6 @@
 // calculate frequencies for the lomb-scargle periodogram
 dTyp * getFrequencies(dTyp *x, int npts, Settings *settings) {
 	dTyp range = x[npts - 1] - x[0];
-	
-	// force grid to be power of two if necessary
-	// this will correct "over"
-	settings->nfreqs = (int)floor(0.5 * settings->over * settings->hifac * npts);
-	if (settings->lsp_flags & FORCE_POWER_OF_TWO)
-		getNfreqsAndCorrOversampling(npts, settings);
 	
 	// df = nyquist frequency / over
 	dTyp df = 1. / (settings->over * range);
@@ -72,6 +69,7 @@ void readLC(FILE *in, dTyp **tobs, dTyp **yobs, int *npts) {
 	int nfound = fscanf(in, "%d", npts);
 	if (nfound < 1) {
 		eprint("can't read the first line (containing nobs)\n");
+		exit(EXIT_FAILURE);
 	}
 	
 	LOG("read in number of observations");
@@ -89,6 +87,7 @@ void readLC(FILE *in, dTyp **tobs, dTyp **yobs, int *npts) {
 			eprint("could not read line %d of "
 				"lc file (only %d found), t[i] = %lf, y[i] = %lf\n",
 				i+1, nfound, (*tobs)[i], (*yobs)[i]);
+			exit(EXIT_FAILURE);
 		}
 	}
 }
@@ -117,6 +116,16 @@ void lombScargleFromLightcurveFile(Settings *settings) {
 	START_TIMER;
 	readLC(settings->in, &tobs, &yobs, &npts);
 	STOP_TIMER("readLC", start);
+	
+	// force grid to be power of two if necessary
+        // this will correct "over" (and "nfreqs")
+        if (settings->lsp_flags & FORCE_POWER_OF_TWO)
+                getNfreqsAndCorrOversampling(npts, settings);
+	else {
+		settings->over   = settings->over0;
+        	settings->nfreqs = (int)floor(0.5 * settings->over 
+					* settings->hifac * npts);
+	}
 
 	// compute frequencies
 	START_TIMER;
@@ -134,12 +143,18 @@ void lombScargleFromLightcurveFile(Settings *settings) {
 	STOP_TIMER("argmax (find peak)", start);
 
 	// write peak
-	dTyp fap = probability(lsp[max_ind], npts, settings->nfreqs, settings->over);
-	printf("%s: max freq: %.3e, false alarm probability: %.3e\n", 
+	dTyp fap = probability(lsp[max_ind], npts, settings->nfreqs, 
+														settings->over);
+	if (settings->lsp_flags & VERBOSE ) 
+		fprintf(stderr, "%s: max freq: %.3e, false alarm probability: %.3e\n", 
 							settings->filename_in, frqs[max_ind], fap);
 
-	// save lomb scargle
-	if(settings->lsp_flags & SAVE_FULL_LSP) {
+	// save lomb scargle (1) if all lsp's are to be saved
+	if(settings->lsp_flags & SAVE_FULL_LSP 
+			// or (2) if only significant lsp's are to be saved and this
+			//        lsp is significant
+			|| (settings->lsp_flags & SAVE_IF_SIGNIFICANT 
+				&& fap < settings->fthresh) ) {
 		START_TIMER;
 		for(int i = 0; i < settings->nfreqs; i++) 
 			fprintf(settings->out, "%e %e\n", frqs[i], lsp[i]);
@@ -151,70 +166,108 @@ void lombScargleFromLightcurveFile(Settings *settings) {
 								frqs[max_ind], fap);
 	
 
+	free(tobs);
+	free(yobs);
+	free(lsp);
+	free(frqs);
 }
 
 
-// reads a list of lightcurve filenames and computes lomb scargle
-// for each of them
+// reads a list of lightcurve filenames and computes lomb scargle for each
 void multipleLombScargle(Settings *settings) {
 	int nlightcurves;
 
-	LOG("in multipleLombScargle");
+        // get number of GPUs
+	int ngpus;
+	checkCudaErrors(cudaGetDeviceCount(&ngpus));
 
 	// read the number of files from the first line
 	int ncount = fscanf(settings->inlist, "%d", &nlightcurves);
 	if (ncount == 0) {
 		eprint("provide the number of lightcurves before any filenames.\n");
+		exit(EXIT_FAILURE);
 	}
 	
-	LOG("read number of files from list");
-
 	// if we're saving peak values to another file, open that file now.
 	if (settings->lsp_flags & SAVE_MAX_LSP) 
 		settings->outlist = fopen(settings->filename_outlist, "w");
 	
-	LOG("opened outlist");
-
 	// iterate through lightcurves
-	for(int fno = 0 ; fno < nlightcurves ; fno++){
+	int thread, global_lcno = 0, lcno;
+	omp_set_num_threads(settings->nthreads);
+	
+	// OpenMP + CUDA for master/slave parallelism
+	#pragma omp parallel default(shared) private(thread, lcno, ncount) 
+	{
+		clock_t start;
+		bool tstop = false;
+		// set GPU for thread
+		thread = omp_get_thread_num();
 
-		LOG("new lightcurve");
+		// make a copy of the settings
+		Settings *thread_settings = (Settings *)malloc(sizeof(Settings));
+		memcpy(thread_settings, settings, sizeof(Settings));
+		
+		// if the user did not set the device number, set it ourselves
+		if (thread_settings->device == -1)
+			thread_settings->device = thread % ngpus;
+		checkCudaErrors(cudaSetDevice(thread_settings->device));
+		
+		while(true){
+			// read filename & increment lc count
+			#pragma omp critical
+			{
+				lcno = global_lcno;
+				if (lcno >= nlightcurves) 
+					tstop = true;
 
-		// read filename
-		ncount = fscanf(settings->inlist, "%s", settings->filename_in);
-		if (ncount == 0) {
-			eprint("cant read filename number %d.\n",fno + 1);
-		}
+				if (!tstop) {
+					ncount = fscanf(settings->inlist, "%s", 
+									thread_settings->filename_in);
+					if (ncount == 0) {
+						eprint("thread %d, gpu %d: "
+							"cant read filename number %d.\n",
+							thread, thread_settings->device, lcno + 1);
+						exit(EXIT_FAILURE);
+					}	
+					global_lcno++;
+				}
+			}
+			// break criterion
+			if (tstop) break;
+		
+			if (thread_settings->lsp_flags & VERBOSE)
+				fprintf(stderr, "thread %d, gpu %d: Doing lc %d of %d [%s]\n", 
+						thread, thread_settings->device, lcno + 1, 
+						nlightcurves, thread_settings->filename_in);
+			
+			// open lightcurve file
+			thread_settings->in = fopen(thread_settings->filename_in, "r");
 
-		LOG("read in filename");
-
-		if(settings->lsp_flags & VERBOSE)
-			fprintf(stderr, "Doing lc %d of %d [%s]\n", fno + 1, 
-									nlightcurves, settings->filename_in);
-
-		// open lightcurve file
-		settings->in = fopen(settings->filename_in, "r");
-		LOG("opened lightcurve");
-
-		// open lsp file if we're saving the LSP
-		if (settings->lsp_flags & SAVE_FULL_LSP) {
-			// write filename (TODO: allow user to customize)
-			sprintf(settings->filename_out, "%s.lsp", settings->filename_in);
-
-			// open lsp file
-			settings->out = fopen(settings->filename_out, "w");
-		}
-		LOG("opened lsp file");
-
-		// compute lomb scargle (which will also save lsp to file)
-		lombScargleFromLightcurveFile(settings);
-
-		LOG("computed lomb scargle");
-
-		// close lightcurve file (and lsp file)
-		fclose(settings->in);
-		if (settings->lsp_flags & SAVE_FULL_LSP) 
-			fclose(settings->out);
+			// open lsp file if we're saving the LSP
+			if (thread_settings->lsp_flags & SAVE_FULL_LSP) {
+				
+				// write filename (TODO: allow user to customize)
+				sprintf(thread_settings->filename_out, "%s.lsp", 
+										thread_settings->filename_in);
+	
+				// open lsp file
+				thread_settings->out = 
+							fopen(thread_settings->filename_out, "w");
+			}
+			
+			// compute lomb scargle (which will also save lsp to file)
+			lombScargleFromLightcurveFile(thread_settings);
+	
+			// close lightcurve file (and lsp file)
+			fclose(thread_settings->in);
+			if (thread_settings->lsp_flags & SAVE_FULL_LSP) 
+				fclose(thread_settings->out);
+		} 
+		if (thread_settings->lsp_flags & VERBOSE)
+			fprintf(stderr, "thread %d (GPU %d) finished.\n", 
+											thread, thread % ngpus);
+		free(thread_settings);
 	}
 
 	// close the file where peaks are stored
@@ -224,36 +277,67 @@ void multipleLombScargle(Settings *settings) {
 	
 // driver 	
 void launch(Settings *settings, bool list_mode) {
-	if (settings->device != 0)
-		set_device(settings->device);
 	if (list_mode)
 		multipleLombScargle(settings);
-	else {
-		settings->in  = fopen(settings->filename_in, "r");
-		LOG("opened lightcurve");
-		//settings->out = stdout;
-		settings->out = fopen(settings->filename_out, "w");
-		LOG("opened output file");
-
+	else 
 		lombScargleFromLightcurveFile(settings);
 
+}
+
+// free memory and close files
+void finish(Settings *settings, bool list_mode) {
+
+	checkCudaErrors(cudaDeviceSynchronize());
+	checkCudaErrors(cudaProfilerStop());
+
+	if (!list_mode) {
 		fclose(settings->out);
 		fclose(settings->in);
+	}	
+	free(settings);
+}
+
+char progname[200];
+// prints usage/help information
+void help(void *argtable[], struct arg_end *end) {
+	fprintf(stderr, "Usage: %s ", progname);
+	arg_print_syntax(stdout, argtable, "\n\n");
+	fprintf(stderr, "%s uses the NFFT adjoint operation to perform "
+		"fast Lomb-Scargle calculations on GPU(s).\n\n", progname);
+	arg_print_glossary(stdout, argtable, "   %-30s %s\n");
+}
+
+// initialize before calculating LSP
+void init(Settings * settings, bool list_mode) {
+	// set GPU
+	if (settings->device != -1)
+		checkCudaErrors(cudaSetDevice(settings->device));
+	if (!list_mode) {
+		settings->in  = fopen(settings->filename_in, "r");
+		settings->out = fopen(settings->filename_out, "w");
 	}
-	
 }
 
-// help screen
-void usage(void *argtable[], struct arg_end *end) {
-	fprintf(stderr,"PROBLEMS:\n");
-    arg_print_errors(stderr,end,"cunfftls");
-    fprintf(stderr, "HELP:\n");
-    arg_print_glossary(stderr, argtable, " %-25s %s\n");
-    exit(EXIT_FAILURE);
+// prints problems with command line arguments
+void problems(void *argtable[], struct arg_end *end) {
+	arg_print_errors(stderr, end, "cunfftls");
+	fprintf(stderr, "Try '%s --help' for more information\n", progname);
+	exit(EXIT_FAILURE);
 }
 
+// prints version information
+void version(){
+	#ifdef DOUBLE_PRECISION
+	printf("%s (double precision): version %s\n",progname, VERSION);
+	#else
+	printf("%s (single precision): version %s\n",progname, VERSION);
+	#endif  
+}
+
+// (main)
 int main(int argc, char *argv[]){
 	Settings *settings = (Settings *) malloc(sizeof(Settings));
+	sprintf(progname, "%s", argv[0]);
 	////////////////////////////////////////////////////////////////////////
 	// command line arguments
 
@@ -265,7 +349,7 @@ int main(int argc, char *argv[]){
 					"filename containing list of input files");
 	// out
 	struct arg_file *out      = arg_file0(NULL, "out",     "<filename_out>", 
-						"output file");
+					"output file");
 	struct arg_file *outlist  = arg_file0(NULL, "list-out","<list_out>", 
 					"filename to save peak LSP for each lightcurve");
 	// params
@@ -273,32 +357,59 @@ int main(int argc, char *argv[]){
 					"oversample factor");
 	struct arg_dbl *hifac     = arg_dbl0(NULL, "hifac",    "<hifac>",         
 					"max frequency = hifac * nyquist frequency");
+	struct arg_dbl *thresh    = arg_dbl0(NULL, "thresh",    "<hifac>",         
+					"will save lsp if and only if the false alarm probability"
+					" is below 'thresh'");
 	struct arg_int *dev       = arg_int0(NULL, "device",   "<device>", 
-					"device number");
-
+					"device number (setting this forces this device to be"
+					" the *only* device used)");
+	struct arg_int *nth       = arg_int0(NULL, "nthreads", "<nthreads>",
+					"number of openmp threads "
+					"(tip: use a number >= number of GPU's)");
 	// flags
 	struct arg_lit *pow2      = arg_lit0(NULL, "pow2,power-of-two", 
-					"Force nfreqs to be a power of 2");
+					"force nfreqs to be a power of 2");
 	struct arg_lit *timing    = arg_lit0(NULL, "print-timing", 
-					"Print calculation times");
+					"print calculation times");
 	struct arg_lit *verb      = arg_lit0("v",  "verbose", 
 					"more output");
 	struct arg_lit *savemax   = arg_lit0("s",  "save-maxp",
-						"Save max(LSP) for all lightcurves");
+					"save max(LSP) for all lightcurves");
 	struct arg_lit *dsavelsp  = arg_lit0("d",  "dont-save-lsp" , 
 					"do not save full LSP");
+	struct arg_lit *hlp       = arg_lit0("h", "help", 
+					"display usage/options");
+	struct arg_lit *vers      = arg_lit0(NULL, "version", 
+					"display version"); 
 	////////////////////////////////////////////////////////////////////////
 
 	struct arg_end *end = arg_end(20);
 
-	void *argtable[] = { in, inlist, out, outlist, over, hifac, dev, pow2, timing,
-							verb, savemax, dsavelsp, end };
+	void *argtable[] = { hlp, vers, in, inlist, out, outlist, over, 
+			             hifac, thresh, dev, nth, pow2, timing, verb, 
+			             savemax, dsavelsp, end };
+	
+	// check that argtable didn't raise any memory problems
+	if (arg_nullcheck(argtable) != 0) {
+        eprint("%s: insufficient memory\n",progname);
+		fprintf(stderr, "Try '%s --help' for more information\n", progname);
+        exit(EXIT_FAILURE);
+    }
+
 	// Parse the command line
 	int n_error = arg_parse(argc, argv, argtable);
 	bool list_in = false;
   
 	if (n_error != 0) 
-		usage(argtable, end);
+		problems(argtable, end);
+	else if (hlp->count >= 1) {
+		help(argtable, end);
+		exit(EXIT_SUCCESS);
+	}
+	else if (vers->count >= 1) {
+		version();
+		exit(EXIT_SUCCESS);
+	}
 
 	settings->lsp_flags = 0;
 	settings->nfft_flags = 0;
@@ -309,73 +420,90 @@ int main(int argc, char *argv[]){
 		strcpy(settings->filename_inlist, inlist->filename[0]);
 		settings->inlist = fopen(settings->filename_inlist, "r");
 		list_in = true;
-		fprintf(stderr, "%-20s = %s\n", "list-in", settings->filename_inlist);
 	}
 	if (in->count      == 1){
 		strcpy(settings->filename_in, in->filename[0]);
 		if (list_in){
 			eprint("can't specify both <in> and <inlist>");
+			fprintf(stderr, "Try '%s --help' for more information\n", progname);
+			exit(EXIT_FAILURE);
 		}
-		fprintf(stderr, "%-20s = %s\n", "in", settings->filename_in);
 	}
 	if( outlist->count == 1) {
 		if (!list_in) {
-			fprintf(stderr, "Must specify <inlist> if <outlist> is specified");
-			usage(argtable, end);
+			eprint("Must specify <inlist> if <outlist> is specified");
+			fprintf(stderr, "Try '%s --help' for more information\n", progname);
+			exit(EXIT_FAILURE);
 		}
 		strcpy(settings->filename_outlist, outlist->filename[0]);
 		settings->outlist = fopen(settings->filename_outlist, "w");
-		fprintf(stderr, "%-20s = %s\n", "list-out", settings->filename_outlist);
 	}
 	if (out->count     == 1){
 		if (list_in) {
-			fprintf(stderr, "can't specify both <inlist> and <out>");
-			usage(argtable, end);
+			eprint("can't specify both <inlist> and <out>");
+			fprintf(stderr, "Try '%s --help' for more information\n", progname);
+			exit(EXIT_FAILURE);
 		}
 
 		strcpy(settings->filename_out, out->filename[0]);
 		settings->out = fopen(settings->filename_out, "w");
-		fprintf(stderr, "%-20s = %s\n", "out", settings->filename_out);
 	}
 
 	// require at least one type of input file
 	if (in->count + inlist->count != 1) {
-		fprintf(stderr, "requires at least one of --in or --list-in\n");
-		usage(argtable, end);
+		eprint("requires at least one of --in or --list-in\n");
+		fprintf(stderr, "Try '%s --help' for more information\n", progname);
+		exit(EXIT_FAILURE);
 	}
 	// if its a single file, require output location
 	if (!list_in && out->count == 0){
-		fprintf(stderr, "for a single lightcurve, you must specify both --in and --out\n");
-		usage(argtable, end);
+		eprint("for a single lightcurve, you must specify both --in and --out\n");
+		fprintf(stderr, "Try '%s --help' for more information\n", progname);
+		exit(EXIT_FAILURE);
 	}
 
 	////////////////////
 	// flags
 	if (savemax->count    == 1)
-	settings->lsp_flags  |= SAVE_MAX_LSP;
-	if (dsavelsp->count   == 0)
-	settings->lsp_flags  |= SAVE_FULL_LSP;
+		settings->lsp_flags  |= SAVE_MAX_LSP;
+	if (dsavelsp->count   == 0 && thresh->count == 0)
+		settings->lsp_flags  |= SAVE_FULL_LSP;
 	if (pow2->count       == 1)
-	settings->lsp_flags  |= FORCE_POWER_OF_TWO;
+		settings->lsp_flags  |= FORCE_POWER_OF_TWO;
 	if (timing->count     == 1)
-	settings->lsp_flags  |= TIMING;
+		settings->lsp_flags  |= TIMING;
 	if (verb->count       == 1)
-	settings->lsp_flags  |= VERBOSE;
+		settings->lsp_flags  |= VERBOSE;
+	if (thresh->count     == 1)
+		settings->lsp_flags  |= SAVE_IF_SIGNIFICANT;
+	
+	if (settings->lsp_flags & TIMING)
+		settings->nfft_flags |= PRINT_TIMING;
 
-	if(settings->lsp_flags & TIMING)
-	settings->nfft_flags |= PRINT_TIMING;
+
 
 	////////////////////
 	// parameters
-	settings->over   = over->count  == 1 ? (dTyp) over->dval[0]  : 1;
-	settings->hifac  = hifac->count == 1 ? (dTyp) hifac->dval[0] : 1;
-	settings->device = dev->count   == 1 ? (int)  dev->ival[0]   : 0;
-	fprintf(stderr, "%-20s = %f\n", "over", settings->over);
-	fprintf(stderr, "%-20s = %f\n", "hifac", settings->hifac);
-	fprintf(stderr, "%-20s = %d\n", "device", settings->device);
-  
-  	// RUN 
+	settings->over0    = over->count   == 1 ? (dTyp) over->dval[0]   :  1;
+	settings->hifac    = hifac->count  == 1 ? (dTyp) hifac->dval[0]  :  1;
+	settings->device   = dev->count    == 1 ? (int)  dev->ival[0]    : -1;
+	settings->nthreads = nth->count    == 1 ? (int)  nth->ival[0]    :  1;
+	settings->fthresh  = thresh->count == 1 ? (dTyp) thresh->dval[0] :0.0;
+
+	if (settings->lsp_flags & VERBOSE) {
+		fprintf(stderr, "%-20s = %f\n", "over", settings->over0);
+		fprintf(stderr, "%-20s = %f\n", "hifac", settings->hifac);
+		fprintf(stderr, "%-20s = %d\n", "device", settings->device);
+		fprintf(stderr, "%-20s = %d\n", "nthreads", settings->nthreads);
+		fprintf(stderr, "%-20s = %f\n", "thresh", settings->fthresh);
+  	}
+  	
+	// RUN 
+	init(settings, list_in);
 	launch(settings, list_in);
+	finish(settings, list_in);
+	
+	arg_freetable(argtable,sizeof(argtable)/sizeof(argtable[0]));
 
 	return EXIT_SUCCESS;
 }

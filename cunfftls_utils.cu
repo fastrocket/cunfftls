@@ -31,28 +31,12 @@
 #include "cunfftls_typedefs.h"
 
 
-#ifdef DOUBLE_PRECISION
-__device__ double atomicAdd(double* address, double val)
-{
-    unsigned long long int* address_as_ull =
-                             (unsigned long long int*)address;
-    unsigned long long int old = *address_as_ull, assumed;
-    do {
-        assumed = old;
-			old = atomicCAS(address_as_ull, assumed,
-                        __double_as_longlong(val +
-                               __longlong_as_double(assumed)));
-    } while (assumed != old);
-    return __longlong_as_double(old);
-}
-#endif
-
 __host__ void getNfreqsAndCorrOversampling(int npts, Settings *settings){
-   dTyp nfreqsr = 0.5 * npts * settings->over * settings->hifac;
+   dTyp nfreqsr = 0.5 * npts * settings->over0 * settings->hifac;
 
    // correct the "oversampling" parameter accordingly
    settings->nfreqs = (int) nextPowerOfTwo(floor(nfreqsr));
-   settings->over  *= settings->nfreqs / nfreqsr;
+   settings->over   = settings->over0 * settings->nfreqs / nfreqsr;
 
 }
 
@@ -104,4 +88,5 @@ __host__ dTyp
 seconds(clock_t dt) {
 	return ((dTyp) dt) / ((dTyp)CLOCKS_PER_SEC);
 }
+
 
