@@ -15,6 +15,9 @@ Params = dict( jitter = 0, N = 10000, freq = 100.,
 
 lspdt = np.dtype([ ('f', float), ('p', float)])
 
+def read_lsp(fname):
+	return np.loadtxt(fname, lspdt)
+
 def noise(params):
 	return params['sigma'] * np.random.normal(size=params['N'])
 
@@ -92,29 +95,40 @@ def test_single_double(params):
 def plot_lsp(lsp, title=None, fname='lsp.png', params=None):
 	f, ax = plt.subplots()
 	ax.plot(lsp['f'], lsp['p'], color='k', alpha=0.5)
-	ax.axvline(params['freq'], color='b', ls='--')
+	if not params is None and 'freq' in params:
+		ax.axvline(params['freq'], color='b', ls='--')
 	ax.set_xlabel('freq')
 	ax.set_ylabel('ls power')
 	if not title is None:
 		f.suptitle(title)
 	f.savefig(fname)
 
-Nlcs = 1000
+Nlcs = 10000
 def test_list_of_files(params):
 	l = open("list.dat",'w')
 	l.write("%d\n"%(Nlcs))
 	for i in range(	Nlcs ):
 		x, y = get_signal(params)
-		fname = "lcs/lc%04d.lc"%(i)
+		fname = "lcs/lc%05d.lc"%(i)
 		
 		save_signal(x, y, fname)
 		l.write("%s\n"%fname)
 	l.close()	
 	
-	command = "./%s --list-in=list.dat --over=%e --hifac=%e --list-out=outlist.dat --dont-save-lsp --save-maxp --nthreads=%d"%(
+	command = "./%s --list-in=list.dat --over=%e --hifac=%e --dont-save-lsp --nthreads=%d"%(
 				params['binary'], params['over'], params['hifac'], params['nthreads'])
+
 	print command
 	os.system(command)
+        command = "./%s --list-in=list.dat --over=%e --hifac=%e --nthreads=%d"%(
+				params['binary'], params['over'], params['hifac'], params['nthreads'])
+
+	print command
+	os.system(command)
+	lsp = read_lsp('lcs/lc00001.lc.lsp')
+	
+	plot_lsp(lsp, title='lc00001 LSP', params=params)
+	plt.show()
 	
 def make_lc_with_gaps(params):
 	x, y = get_signal(params)
@@ -134,10 +148,11 @@ def test_gap(params):
 	lsp = get_lsp(x, y, **params)
 	plot_lsp(lsp, title='gap', fname='lsp_gap.png', params=params)
 
-print "TESTING SINGLE AND DOUBLE PRECISION"
-test_single_double(Params)
+#print "TESTING SINGLE AND DOUBLE PRECISION"
+#test_single_double(Params)
 
 print "TESTING LIST OF FILES"
+Params['binary'] = 'cunfftlsf'
 test_list_of_files(Params)
 
 #print "TESTING GAP"

@@ -16,7 +16,7 @@ CUNA_DIR=
 #../cunfft_adjoint
 CUDA_VERSION=7.5
 BLOCK_SIZE=256
-VERSION=1.1
+VERSION=1.2
 
 SRCDIR=.
 HEADERDIR=.
@@ -32,7 +32,7 @@ OPTIMIZE_CPU= -O3
 OPTIMIZE_GPU= -Xcompiler -O3 --use_fast_math
 DEFS := $(DEBUG) -DBLOCK_SIZE=$(BLOCK_SIZE) -DVERSION=\"$(VERSION)\"
 NVCCFLAGS := $(DEFS) $(OPTIMIZE_GPU) -Xcompiler -fopenmp -Xcompiler -fpic --gpu-architecture=compute_$(ARCH) --gpu-code=sm_$(ARCH),compute_$(ARCH) 
-CFLAGS := $(DEFS) -fPIC -fopenmp -Wall $(OPTIMIZE_CPU)
+CFLAGS := $(DEFS) -fPIC -fopenmp -Wall -Wextra -Wshadow -Wnon-virtual-dtor -Wcast-align -Wunused -pedantic $(OPTIMIZE_CPU)
 
 CUDA_LIBS =`pkg-config --libs cudart-$(CUDA_VERSION)` 
 

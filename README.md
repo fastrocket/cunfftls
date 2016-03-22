@@ -1,4 +1,4 @@
-# CUNFFTLS v1.1: CUDA Lomb Scargle implementation
+# CUNFFTLS v1.2: CUDA Lomb Scargle implementation
 
 ### (c) 2016, John Hoffman
 ### jah5@princeton.edu

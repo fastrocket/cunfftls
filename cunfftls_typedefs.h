@@ -28,7 +28,7 @@
 #include "cuna_typedefs.h"
 
 // max length of strings
-#define STRBUFFER 200
+#define STRBUFFER 500
 
 // some precision-dependent definitions
 #ifdef DOUBLE_PRECISION
@@ -40,16 +40,6 @@
    #define THREE_COL_FMT  "%e %e %*e"
    #define TWO_COL_FMT    "%e %e"
 #endif
-
-///////////////////
-// timer utilities (TODO: make these safer and not macros)
-#define START_TIMER \
-    if(settings->lsp_flags & TIMING) start = clock()
-#define STOP_TIMER(label, start)\
-    if(settings->lsp_flags & TIMING)\
-        fprintf(stderr, "[ %-50s L%-5d ] %-30s : %.4e(s)\n", __FILE__,\
-         __LINE__, #label, seconds(clock() - start))
-///////////////////
 
 // small number for scaling the observed times
 #define EPSILON 1e-5
@@ -76,6 +66,9 @@ typedef struct {
 	char filename_outlist[STRBUFFER];
 	int device, nfreqs, nthreads;
 	dTyp over0, over, hifac, df, fthresh;
+	cudaStream_t stream;
+        void *host_workspace, *device_workspace;
+        int host_memory, device_memory;
 	unsigned int nfft_flags;
 	unsigned int lsp_flags;
 } Settings;
