@@ -111,92 +111,91 @@ scaleYobs(const dTyp *yobs, int npts, dTyp *var) {
   return y;
 }
 
+
 // computes + returns pointer to periodogram
 __host__  dTyp *
 lombScargle(const dTyp *tobs, const dTyp *yobs, int npts, 
             Settings *settings) {
 
-  clock_t start;
   int ng = settings->nfreqs * 2;
 
-  START_TIMER;
+  // calculate total host memory and ensure there's enough
+  int total_host_mem = 2 * npts * sizeof(dTyp)
+                     +   (ng/2) * sizeof(dTyp)
+                     +            sizeof(filter_properties);
+
+  if (total_host_mem > settings->host_memory) {
+  eprint("not enough host memory to store lightcurves + lsp");
+        exit(EXIT_FAILURE);
+  }
+
+  // setup pointers
+  dTyp *t      = (dTyp *)  settings->host_workspace; // length npts
+  dTyp *y      = (dTyp *)(t          +        npts); // length npts 
+  dTyp *lsp    = (dTyp *)(y          +        npts); // length ng/2
+  filter_properties *fprops = (filter_properties *)(lsp +  ng/2);
+  
   // scale t and y (zero mean, t \in [-1/2, 1/2))
   dTyp var;
-  dTyp *t = scaleTobs(tobs, npts, settings->over);
-  dTyp *y = scaleYobs(yobs, npts, &var);
-  STOP_TIMER("scale x and y axes", start);
+  scaleTobs(tobs, npts, settings->over, t);
+  scaleYobs(yobs, npts, &var,           y);
+ 
+  // calculate total device memory and ensure we have enough 
+  int total_device_mem = total_host_mem 
+                       + 3 * ng   * sizeof(Complex)
+           + 2 * npts * sizeof(dTyp)
+           + FILTER_RADIUS * sizeof(dTyp);
+ 
+  if (total_device_mem > settings->device_memory) {
+  eprint("not enough device memory to do LSP. "
+    "Try increasing memory per thread");
+        exit(EXIT_FAILURE);
+  }
   
-  dTyp *lsp = (dTyp *) malloc((ng/2) * sizeof(dTyp));
-
-
-  START_TIMER;
-  // declare 
-  dTyp *d_t, *d_y, *d_ygrid, *d_lsp;
-  Complex *d_f_hat, *d_f_hat_win;
-
-  // allocate
-  checkCudaErrors(cudaMalloc((void **) &d_t,           npts * sizeof(dTyp)));
-  checkCudaErrors(cudaMalloc((void **) &d_y,           npts * sizeof(dTyp)));
-  checkCudaErrors(cudaMalloc((void **) &d_ygrid,     2 * ng * sizeof(dTyp))); // shared with window
-  checkCudaErrors(cudaMalloc((void **) &d_lsp,       (ng/2) * sizeof(dTyp)));
-  checkCudaErrors(cudaMalloc((void **) &d_f_hat,         ng * sizeof(Complex)));
-  checkCudaErrors(cudaMalloc((void **) &d_f_hat_win, 2 * ng * sizeof(Complex)));
+  // setup pointers
+  dTyp *d_t            = (dTyp *)settings->device_workspace; // length npts
+  dTyp *d_y            = (dTyp *)   (d_t          +   npts); // length npts
+  dTyp *d_lsp          = (dTyp *)   (d_y          +   npts); // length ng/2
+  filter_properties *d_fprops       = (filter_properties *)(d_lsp + ng/2);
+  fprops->E1           = (dTyp *)   (d_fprops     +      1); // length npts
+  fprops->E2           = (dTyp *)   (fprops->E1   +   npts); // length npts
+  fprops->E3           = (dTyp *)   (fprops->E2   +   npts); // length FILTER_RADIUS  
+  Complex *d_f_hat     = (Complex *)(fprops->E3   + FILTER_RADIUS); // length ng 
+  Complex *d_f_hat_win = (Complex *)(d_f_hat      +     ng); // length 2 * ng
+  
+  // generate filter
+  generate_pinned_filter_properties(d_t, npts, ng, fprops, d_fprops, settings->stream); 
+  checkCudaErrors(cudaStreamSynchronize(settings->stream));
 
   // memset
-  checkCudaErrors(cudaMemset(d_ygrid,       0, 2 * ng * sizeof(dTyp)));
-  //checkCudaErrors(cudaMemset(d_lsp,         0, (ng/2) * sizeof(dTyp)));
-  //checkCudaErrors(cudaMemset(d_f_hat,       0,     ng * sizeof(Complex)));
-  //checkCudaErrors(cudaMemset(d_f_hat_win,   0, 2 * ng * sizeof(Complex)));
-  STOP_TIMER("cuda malloc all gpu vars", start);
-  
-  
-  // transfer data to gpu
-  START_TIMER;
-  checkCudaErrors(cudaMemcpy(d_t, t, npts * sizeof(dTyp), cudaMemcpyHostToDevice));
-  checkCudaErrors(cudaMemcpy(d_y, y, npts * sizeof(dTyp), cudaMemcpyHostToDevice));
-  STOP_TIMER("transfer data to device", start);
+  checkCudaErrors(cudaMemsetAsync(d_f_hat, 0, 3 * ng * sizeof(Complex), settings->stream));
 
-  // generate filter
-  START_TIMER;
-  filter_properties *fprops_host, *fprops_device;
-  generate_filter_properties(d_t, npts, ng, &fprops_host, &fprops_device); 
-  STOP_TIMER("generate filter properties", start);
+  // transfer data to gpu
+  checkCudaErrors(cudaMemcpyAsync(settings->device_workspace, settings->host_workspace,
+        total_host_mem, cudaMemcpyHostToDevice, settings->stream));
 
   // evaluate NFFT for signal & window
-  START_TIMER;
-  cunfft_adjoint_raw(d_t, d_y,  d_ygrid, d_f_hat,     npts,     ng, fprops_device);
-  checkCudaErrors(cudaMemset(d_ygrid,       0, ng * sizeof(dTyp)));
-  cunfft_adjoint_raw(d_t, NULL, d_ygrid, d_f_hat_win, npts, 2 * ng, fprops_device); 
-  STOP_TIMER("cunfft_adjoint_raw", start);
+  cunfft_adjoint_raw_async(d_t,  d_y, d_f_hat,     npts,     ng, d_fprops, settings->stream);
+  cunfft_adjoint_raw_async(d_t, NULL, d_f_hat_win, npts, 2 * ng, d_fprops, settings->stream); 
+  checkCudaErrors(cudaStreamSynchronize(settings->stream));
 
   // calculate number of CUDA blocks we need
   int nblocks = (ng/2) / BLOCK_SIZE;
   while (nblocks * BLOCK_SIZE < (ng/2)) nblocks++;
   
   // convert to LSP
-  START_TIMER;
-  convertToLSP <<< nblocks, BLOCK_SIZE >>> 
+  convertToLSP <<< nblocks, BLOCK_SIZE, 0, settings->stream >>> 
            (d_f_hat, d_f_hat_win, var, ng/2, npts, d_lsp);
-  STOP_TIMER("convertToLSP", start);
+  checkCudaErrors(cudaStreamSynchronize(settings->stream));
 
   // Copy the results back to CPU memory
-  START_TIMER;
-  checkCudaErrors(cudaMemcpy(lsp, d_lsp, (ng/2) * sizeof(dTyp), cudaMemcpyDeviceToHost));
-  STOP_TIMER("malloc + memcpy lsp", start);
+  checkCudaErrors(cudaMemcpyAsync(lsp, d_lsp, (ng/2) * sizeof(dTyp), 
+        cudaMemcpyDeviceToHost, settings->stream));
 
   // Free memory
-  free(t);
-  free(y);
-  checkCudaErrors(cudaFree(d_lsp));
-  checkCudaErrors(cudaFree(d_ygrid));
-  checkCudaErrors(cudaFree(d_y));
-  checkCudaErrors(cudaFree(d_t));
-  checkCudaErrors(cudaFree(d_f_hat_win));
-  checkCudaErrors(cudaFree(d_f_hat));
-
   return lsp;
-
 }
+
 
 // below is taken directly from nfftls (B. Leroy)
 /**
