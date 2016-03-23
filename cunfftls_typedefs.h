@@ -28,17 +28,17 @@
 #include "cuna_typedefs.h"
 
 // max length of strings
-#define STRBUFFER 200
+#define STRBUFFER 1024
 
 // some precision-dependent definitions
 #ifdef DOUBLE_PRECISION
    #define PRECISION      'd'
-   #define THREE_COL_FMT  "%le %le %*le"
-   #define TWO_COL_FMT    "%le %le"
+   #define THREE_COL_FMT  "%le %le %le\n"
+   #define TWO_COL_FMT    "%le %le\n"
 #else
    #define PRECISION      'f'
-   #define THREE_COL_FMT  "%e %e %*e"
-   #define TWO_COL_FMT    "%e %e"
+   #define THREE_COL_FMT  "%e %e %e\n"
+   #define TWO_COL_FMT    "%e %e\n"
 #endif
 
 ///////////////////
@@ -59,12 +59,13 @@
 
 // flags for cunfftls
 typedef enum {
-	SAVE_FULL_LSP = 0x01,
-	SAVE_MAX_LSP = 0x02,
-	FORCE_POWER_OF_TWO = 0x04,
-	TIMING = 0x08,
-	VERBOSE = 0x10,
-	SAVE_IF_SIGNIFICANT = 0x20
+	SAVE_FULL_LSP       = 0x01,
+	SAVE_MAX_LSP        = 0x02,
+	FORCE_POWER_OF_TWO  = 0x04,
+	TIMING              = 0x08,
+	VERBOSE             = 0x10,
+	SAVE_IF_SIGNIFICANT = 0x20,
+        FLOATING_MEAN       = 0x40
 } LSP_FLAGS;
 
 // settings 
@@ -74,8 +75,12 @@ typedef struct {
 	char filename_in     [STRBUFFER];
 	char filename_out    [STRBUFFER];
 	char filename_outlist[STRBUFFER];
-	int device, nfreqs, nthreads;
+	int device, nfreqs, nthreads, device_memory, 
+	    host_memory, nbootstraps;
 	dTyp over0, over, hifac, df, fthresh;
+	cudaStream_t stream;
+	void *host_workspace;
+	void *device_workspace;
 	unsigned int nfft_flags;
 	unsigned int lsp_flags;
 } Settings;

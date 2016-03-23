@@ -60,7 +60,7 @@ set_device(int device) {
 }
 
 __host__ void
-meanAndVariance(int n, const dTyp *y, dTyp *mean , dTyp *variance) {
+meanAndVariance(const int n, const dTyp *y, dTyp *mean , dTyp *variance) {
   *mean = 0;
   dTyp M2 = 0, delta;
   
@@ -72,6 +72,21 @@ meanAndVariance(int n, const dTyp *y, dTyp *mean , dTyp *variance) {
   }
   *variance = M2/(n - 1);
 }
+
+__host__ void
+weightedMeanAndVariance(const int n, const dTyp *y, const dTyp *w, 
+                        dTyp *mean, dTyp *variance) {
+  *mean = 0;
+  *variance = 0;
+
+  for(int i = 0; i < n; i++) 
+    *mean += w[i] * y[i];
+  
+  for(int i = 0; i < n; i++) 
+    *variance += w[i] * (y[i] - *mean) * (y[i] - *mean);
+  
+}
+
 __device__ dTyp
 sign(dTyp a, dTyp b) {
   	return ((b >= 0) ? 1 : -1) * absoluteValueReal(a);
@@ -89,4 +104,17 @@ seconds(clock_t dt) {
 	return ((dTyp) dt) / ((dTyp)CLOCKS_PER_SEC);
 }
 
-
+__host__ void
+randomSample(const int npts, const dTyp *tobs, const dTyp *yobs, 
+              const dTyp *erobs, dTyp *t, dTyp *y, dTyp *er) {
+  int u;
+  if (erobs == NULL) er = NULL;
+  
+  for (int i = 0; i < npts; i++) {
+    u = rand() % npts;
+    t[i] = tobs[u];
+    y[i] = yobs[u];
+    if (erobs != NULL)
+      er[i] = erobs[u];
+  }
+}

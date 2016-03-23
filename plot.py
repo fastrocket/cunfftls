@@ -99,22 +99,45 @@ def plot_lsp(lsp, title=None, fname='lsp.png', params=None):
 		f.suptitle(title)
 	f.savefig(fname)
 
-Nlcs = 1000
-def test_list_of_files(params):
-	l = open("list.dat",'w')
-	l.write("%d\n"%(Nlcs))
-	for i in range(	Nlcs ):
+def make_fake_lcs(params, Nlcs):
+	l = open("list.dat", 'w')
+        l.write('%d'%Nlcs)
+        for i in range(Nlcs):
 		x, y = get_signal(params)
-		fname = "lcs/lc%04d.lc"%(i)
-		
+		fname = "lcs/lc%05d.lc"%(i)
 		save_signal(x, y, fname)
-		l.write("%s\n"%fname)
-	l.close()	
-	
-	command = "./%s --list-in=list.dat --over=%e --hifac=%e --list-out=outlist.dat --dont-save-lsp --save-maxp --nthreads=%d"%(
+		l.write('%s\n'%fname)
+	l.close()
+
+def test_list_of_files(params):
+	command = "./%s --verbose --list-in=list.dat --over=%e --hifac=%e --list-out=outlist.dat --dont-save-lsp --save-maxp --nthreads=%d --nbootstraps=50"%(
 				params['binary'], params['over'], params['hifac'], params['nthreads'])
 	print command
 	os.system(command)
+
+
+def test_floating_mean(params):
+	
+	command = "./%s --in=lcs/lc00001.lc --floating-mean --over=%e --hifac=%e --out=fmean_lsp.dat --nbootstraps=100 --verbose"%(
+				params['binary'], params['over'], params['hifac'])
+	print command
+	os.system(command)
+
+	command = "./%s --in=lcs/lc00001.lc --over=%e --hifac=%e --out=no_fmean_lsp.dat --nbootstraps=100 --verbose"%(
+				params['binary'], params['over'], params['hifac'])
+	print command
+	os.system(command)
+	f, ax = plt.subplots()
+	lsp_old = np.loadtxt('no_fmean_lsp.dat', dtype=lspdt)
+	lsp_new = np.loadtxt('fmean_lsp.dat', dtype=lspdt)
+	ax.axvline(params['freq'], ls='--', color='r')
+	ax.plot(lsp_old['f'], lsp_old['p'], color='k', alpha=0.5, label="No floating mean")
+	ax.plot(lsp_new['f'], lsp_new['p'], color='r', alpha=0.7, label="floating mean")
+	ax.legend(loc='best')
+	ax.set_xlabel("freq (1/d)")
+	ax.set_ylabel("lsp power")
+	plt.show()
+	f.savefig("floating_mean_test.png")
 	
 def make_lc_with_gaps(params):
 	x, y = get_signal(params)
@@ -134,11 +157,18 @@ def test_gap(params):
 	lsp = get_lsp(x, y, **params)
 	plot_lsp(lsp, title='gap', fname='lsp_gap.png', params=params)
 
-print "TESTING SINGLE AND DOUBLE PRECISION"
-test_single_double(Params)
+#make_fake_lcs(Params, 1000)
+
+#print "TESTING SINGLE AND DOUBLE PRECISION"
+#test_single_double(Params)
 
 print "TESTING LIST OF FILES"
+Params['binary'] = 'cunfftlsf'
 test_list_of_files(Params)
+
+print "TESTING FLOATING MEAN"
+Params['binary'] = 'cunfftlsf'
+test_floating_mean(Params)
 
 #print "TESTING GAP"
 #test_gap(Params)

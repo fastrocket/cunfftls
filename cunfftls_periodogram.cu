@@ -35,10 +35,15 @@
 #include "cunfftls_typedefs.h"
 #include "cunfftls_utils.h"
 
+#ifdef DOUBLE_PRECISION
+#define FILTER_RADIUS 12
+#else
+#define FILTER_RADIUS 6
+#endif
 
 // CUDA kernel for converting spectral/window functions to LSP
 __global__ void
-convertToLSP( const Complex *sp, const Complex *win, dTyp var, int m, int npts, dTyp *lsp) {
+convertToLSP( const Complex *sp, const Complex *win, const dTyp var, const int m, const int npts, dTyp *lsp) {
 
   int j = blockIdx.x * BLOCK_SIZE + threadIdx.x;
   if (j == m-1) lsp[j] = 0.;
@@ -62,27 +67,45 @@ convertToLSP( const Complex *sp, const Complex *win, dTyp var, int m, int npts, 
     dTyp sin2wttau = 0.5 * m - sum;
     dTyp cterm = square(ycoswt_tau) / cos2wttau;
     dTyp sterm = square(ysinwt_tau) / sin2wttau;
-    lsp[j] = (cterm + sterm) / (2 * var);
-    /*
-    dTyp c2ttau = 0.5 * npts + 0.5 * C2 * (C2 * invhypo) + 0.5 * Sy 
-    dTyp hc2wt = 0.5 * cuReal(z2)  * invhypo;
-    dTyp hs2wt = 0.5 * cuImag(z2)  * invhypo;
-    dTyp cwt = cuSqrt(0.5 + hc2wt);
-    dTyp swt = sign(cuSqrt(0.5 - hc2wt), hs2wt);
-    dTyp den = 0.5 * npts + hc2wt * cuReal(z2) + hs2wt * cuImag(z2);
-    dTyp cterm = square(cwt * cuReal(z1) + swt * cuImag(z1)) / den;
-    dTyp sterm = square(cwt * cuImag(z1) - swt * cuReal(z1)) / (npts - den);
+    lsp[j] = (cterm + sterm) / ((npts - 1) * var);
+  }
+}
+
+
+// CUDA kernel for converting spectral/window functions to GENERALIZED (i.e. floating mean) LSP
+__global__ void
+convertToGLSP( const Complex *sp, const Complex *win, const dTyp YY, const int m, const int npts, dTyp *lsp) {
+
+  int j = blockIdx.x * BLOCK_SIZE + threadIdx.x;
+  if (j == m-1) lsp[j] = 0.;
+  else if ( j + 1 < m ) {
+    Complex z1 =  sp[ j + 1 ];
+    Complex z2 = win[ 2 * (j + 1) ];
+    Complex z3 = win[ j + 1 ];
+
+    dTyp YS = cuImag(z1);
+    dTyp YC = cuReal(z1);
+
+    dTyp S2 = cuImag(z2);
+    dTyp C2 = cuReal(z2);
+
+    dTyp S  = cuImag(z3);
+    dTyp C  = cuReal(z3);
+
+    dTyp CChat = 0.5 * (1 + C2);
     
-    lsp[j] = (cterm + sterm) / (2 * var);*/
+    dTyp SS    = 1 - CChat - S * S; 
+    dTyp CC    = CChat - C * C;
+    dTyp CS    = 0.5 * S2 - C * S;
+    dTyp D     = CC * SS - CS * CS;
+    lsp[j]     = (1./(YY * D)) * (SS * YC * YC + CC * YS * YS - 2 * CS * YC * YS);
+   
   }
 }
 
 // ensures observed times are in [-1/2, 1/2)
-__host__ dTyp *
-scaleTobs(const dTyp *tobs, int npts, dTyp over) {
-
-  // clone data
-  dTyp * t = (dTyp *)malloc(npts * sizeof(dTyp));
+__host__ void
+scaleTobs(const dTyp *tobs, int npts, dTyp over, dTyp *t) {
 
   // now transform t -> [-1/2, 1/2)
   dTyp tmax     = tobs[npts - 1];
@@ -94,23 +117,30 @@ scaleTobs(const dTyp *tobs, int npts, dTyp over) {
   for(int i = 0; i < npts; i++) 
     t[i] = 2 * a * (tobs[i] - tmin) * invrange - a;
   
-  return t;
 }
 
 
 // subtracts mean from observations
-__host__ dTyp *
-scaleYobs(const dTyp *yobs, int npts, dTyp *var) {
+__host__ void
+scaleYobs(const dTyp *yobs, const int npts, dTyp *var, dTyp *y) {
   dTyp avg;
   meanAndVariance(npts, yobs, &avg, var);
   
-  dTyp *y = (dTyp *)malloc(npts * sizeof(dTyp));
   for(int i = 0; i < npts; i++)
     y[i] = yobs[i] - avg;
   
-  return y;
 }
 
+// subtracts mean from observations
+__host__ void
+scaleYobsWeighted(const dTyp *yobs, const dTyp *w, const int npts, dTyp *var, dTyp *Y) {
+  dTyp avg;
+  weightedMeanAndVariance(npts, yobs, w, &avg, var);
+  
+  for(int i = 0; i < npts; i++) 
+    Y[i] = w[i] * (yobs[i] - avg);
+  
+}
 
 // computes + returns pointer to periodogram
 __host__  dTyp *
@@ -119,13 +149,15 @@ lombScargle(const dTyp *tobs, const dTyp *yobs, int npts,
 
   int ng = settings->nfreqs * 2;
 
+  
   // calculate total host memory and ensure there's enough
   int total_host_mem = 2 * npts * sizeof(dTyp)
                      +   (ng/2) * sizeof(dTyp)
                      +            sizeof(filter_properties);
 
   if (total_host_mem > settings->host_memory) {
-  eprint("not enough host memory to store lightcurves + lsp");
+        eprint("total host memory is %d bytes, but we need %d "
+                  "bytes to perform LSP", settings->host_memory, total_host_mem);
         exit(EXIT_FAILURE);
   }
 
@@ -147,8 +179,8 @@ lombScargle(const dTyp *tobs, const dTyp *yobs, int npts,
            + FILTER_RADIUS * sizeof(dTyp);
  
   if (total_device_mem > settings->device_memory) {
-  eprint("not enough device memory to do LSP. "
-    "Try increasing memory per thread");
+        eprint("total device memory is %d bytes, but we need %d "
+                  "bytes to perform LSP", settings->device_memory, total_device_mem);
         exit(EXIT_FAILURE);
   }
   
@@ -163,16 +195,16 @@ lombScargle(const dTyp *tobs, const dTyp *yobs, int npts,
   Complex *d_f_hat     = (Complex *)(fprops->E3   + FILTER_RADIUS); // length ng 
   Complex *d_f_hat_win = (Complex *)(d_f_hat      +     ng); // length 2 * ng
   
+  // transfer data to gpu
+  checkCudaErrors(cudaMemcpyAsync(settings->device_workspace, settings->host_workspace,
+        total_host_mem, cudaMemcpyHostToDevice, settings->stream));
+
   // generate filter
   generate_pinned_filter_properties(d_t, npts, ng, fprops, d_fprops, settings->stream); 
   checkCudaErrors(cudaStreamSynchronize(settings->stream));
 
   // memset
   checkCudaErrors(cudaMemsetAsync(d_f_hat, 0, 3 * ng * sizeof(Complex), settings->stream));
-
-  // transfer data to gpu
-  checkCudaErrors(cudaMemcpyAsync(settings->device_workspace, settings->host_workspace,
-        total_host_mem, cudaMemcpyHostToDevice, settings->stream));
 
   // evaluate NFFT for signal & window
   cunfft_adjoint_raw_async(d_t,  d_y, d_f_hat,     npts,     ng, d_fprops, settings->stream);
@@ -195,6 +227,113 @@ lombScargle(const dTyp *tobs, const dTyp *yobs, int npts,
   // Free memory
   return lsp;
 }
+
+__host__ void convertErrorsToWeights(const dTyp *errs, dTyp *weights, const int n) {
+  
+  dTyp W = 0;
+  if (errs == NULL) {
+     W = 1./n;
+     for(int i = 0; i < n; i++) 
+        weights[i] = W;
+     return;
+  }
+  for(int i = 0; i < n; i++) {
+    weights[i] = 1./(errs[i] * errs[i]);
+    W         += weights[i];
+  }
+  dTyp Winv = 1./W;
+  for(int i = 0; i < n; i++)
+    weights[i] *= Winv;
+}
+
+// computes + returns pointer to periodogram
+__host__  dTyp *
+generalizedLombScargle(const dTyp *tobs, const dTyp *yobs, const dTyp *errs, int npts, 
+            Settings *settings) {
+
+  int ng = settings->nfreqs * 2;
+  
+  // calculate total host memory and ensure there's enough
+  int total_host_mem = 3 * npts * sizeof(dTyp)
+                     +   (ng/2) * sizeof(dTyp)
+                     +            sizeof(filter_properties);
+
+  if (total_host_mem > settings->host_memory) {
+        eprint("total host memory is %d bytes, but we need %d "
+                  "bytes to perform LSP", settings->host_memory, total_host_mem);
+        exit(EXIT_FAILURE);
+  }
+
+  // setup (host) pointers
+  dTyp *t      = (dTyp *)  settings->host_workspace; // length npts
+  dTyp *y      = (dTyp *)(t          +        npts); // length npts 
+  dTyp *w      = (dTyp *)(y          +        npts); // length npts
+  dTyp *lsp    = (dTyp *)(w          +        npts); // length ng/2
+  filter_properties *fprops = (filter_properties *)(lsp +  ng/2);
+  
+  // scale t and y (zero weighted mean, t \in [-1/2, 1/2))
+  dTyp var;
+  convertErrorsToWeights(errs, w, npts);
+  scaleTobs(tobs, npts, settings->over, t);
+  scaleYobsWeighted(yobs, w, npts, &var, y);
+ 
+  // calculate total device memory and ensure we have enough 
+  int total_device_mem = total_host_mem 
+                       +      3 * ng   * sizeof(Complex)
+                       +      2 * npts * sizeof(dTyp)
+                       + FILTER_RADIUS * sizeof(dTyp);
+ 
+  if (total_device_mem > settings->device_memory) {
+        eprint("total device memory is %d bytes, but we need %d "
+                  "bytes to perform LSP", settings->device_memory, total_device_mem);
+        exit(EXIT_FAILURE);
+  }
+  
+  // setup (device) pointers
+  dTyp *d_t            = (dTyp *)settings->device_workspace; // length npts
+  dTyp *d_y            = (dTyp *)   (d_t          +   npts); // length npts
+  dTyp *d_w            = (dTyp *)   (d_y          +   npts); // length npts
+  dTyp *d_lsp          = (dTyp *)   (d_w          +   npts); // length ng/2
+  filter_properties *d_fprops       = (filter_properties *)(d_lsp + ng/2);
+
+  fprops->E1           = (dTyp *)   (d_fprops     +      1); // length npts
+  fprops->E2           = (dTyp *)   (fprops->E1   +   npts); // length npts
+  fprops->E3           = (dTyp *)   (fprops->E2   +   npts); // length FILTER_RADIUS  
+  Complex *d_f_hat     = (Complex *)(fprops->E3   + FILTER_RADIUS); // length ng 
+  Complex *d_f_hat_win = (Complex *)(d_f_hat      +     ng); // length 2 * ng
+  
+  // transfer data to gpu
+  checkCudaErrors(cudaMemcpyAsync(settings->device_workspace, settings->host_workspace,
+        total_host_mem, cudaMemcpyHostToDevice, settings->stream));
+
+  // generate filter
+  generate_pinned_filter_properties(d_t, npts, ng, fprops, d_fprops, settings->stream); 
+  checkCudaErrors(cudaStreamSynchronize(settings->stream));
+
+  // memset
+  checkCudaErrors(cudaMemsetAsync(d_f_hat, 0, 3 * ng * sizeof(Complex), settings->stream));
+
+  // evaluate NFFT for signal & window
+  cunfft_adjoint_raw_async(d_t,  d_y, d_f_hat,     npts,     ng, d_fprops, settings->stream);
+  cunfft_adjoint_raw_async(d_t,  d_w, d_f_hat_win, npts, 2 * ng, d_fprops, settings->stream); 
+  checkCudaErrors(cudaStreamSynchronize(settings->stream));
+
+  // calculate number of CUDA blocks we need
+  int nblocks = (ng/2) / BLOCK_SIZE;
+  while (nblocks * BLOCK_SIZE < (ng/2)) nblocks++;
+  
+  // convert to (generalized) LSP
+  convertToGLSP <<< nblocks, BLOCK_SIZE, 0, settings->stream >>> 
+           (d_f_hat, d_f_hat_win, var, ng/2, npts, d_lsp);
+  checkCudaErrors(cudaStreamSynchronize(settings->stream));
+
+  // Copy the results back to CPU memory
+  checkCudaErrors(cudaMemcpyAsync(lsp, d_lsp, (ng/2) * sizeof(dTyp), 
+        cudaMemcpyDeviceToHost, settings->stream));
+
+  return lsp;
+}
+
 
 
 // below is taken directly from nfftls (B. Leroy)

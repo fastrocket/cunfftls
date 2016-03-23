@@ -29,6 +29,7 @@
 #include <math.h>
 #include <argtable2.h>
 #include <omp.h>
+#include <time.h>
 #include <cuda.h>
 #include <cuda_profiler_api.h>
 
@@ -62,11 +63,25 @@ dTyp * getFrequencies(dTyp *x, int npts, Settings *settings) {
 
 
 // Read lightcurve from filestream
-void readLC(FILE *in, dTyp **tobs, dTyp **yobs, int *npts) {
+void readLC(FILE *in, dTyp **tobs, dTyp **yobs, dTyp **errs, int *npts) {
+  char buff[STRBUFFER];
+  int lineno = 0, ncols, ncount;
+  dTyp err;
+
+  // make sure file pointer is not NULL
+  if (in == NULL) {
+    eprint("input file is NULL.\n");
+    exit(EXIT_FAILURE);
+  }
 
   // read number of observations (first line)
-  int nfound = fscanf(in, "%d", npts);
-  if (nfound < 1) {
+  if ( fgets(buff, sizeof(buff), in) == NULL ) 
+    ncount = 0;
+  else 
+    ncount = sscanf(buff, "%d", npts);
+  
+  // exit if unsuccessful
+  if (ncount < 1) {
     eprint("can't read the first line (containing nobs)\n");
     exit(EXIT_FAILURE);
   }
@@ -74,16 +89,41 @@ void readLC(FILE *in, dTyp **tobs, dTyp **yobs, int *npts) {
   // allocate memory
   *tobs = (dTyp *)malloc(*npts * sizeof(dTyp));
   *yobs = (dTyp *)malloc(*npts * sizeof(dTyp));
+  
+  while (fgets(buff, sizeof(buff), in) != NULL) {
 
-  // read line by line
-  for(int i = 0; i < *npts; i++) {
-    nfound = fscanf(in, FORMAT, (*tobs) + i, (*yobs) + i);  
-    if (nfound < 2) {
-      eprint("could not read line %d of "
-        "lc file (only %d found), t[i] = %lf, y[i] = %lf\n",
-        i+1, nfound, (*tobs)[i], (*yobs)[i]);
-      exit(EXIT_FAILURE);
+    // read first line to get number of columns
+    if (lineno == 0) {
+      ncols = sscanf(buff, THREE_COL_FMT, *tobs, *yobs, &err);
+      if (ncols == 3) {
+        *errs      = (dTyp *)malloc(*npts * sizeof(dTyp));
+	      (*errs)[0] = err;
+      }
+      else if (ncols == 2)
+        *errs = NULL;
+      else {
+      	eprint("ncols = %d, which is not 2 or 3.\n", ncols);
+      	exit(EXIT_FAILURE);
+      }
+      lineno ++;
+      continue;
     }
+
+    // read line
+    else if (ncols == 2) 
+      ncount = sscanf(buff, TWO_COL_FMT, *tobs + lineno, *yobs + lineno);
+    else if (ncols == 3) 
+      ncount = sscanf(buff, THREE_COL_FMT, *tobs + lineno, *yobs + lineno, 
+				*errs + lineno);
+    // handle errors
+    if (ncount != ncols) {
+      eprint("problem reading line %d; only %d of %d "
+	     "values matched (t[i] = %e, y[i] = %e, errs[i] = %e\n)", 
+	      lineno + 1, ncount, ncols, (*tobs)[lineno], (*yobs)[lineno],
+	      ncols == 3 ? (*errs)[lineno] : 0);
+      exit(EXIT_FAILURE);
+    } 
+    lineno ++ ;
   }
 }
 
@@ -100,21 +140,60 @@ int argmax(dTyp *x, int n){
   return m;
 }
 
+void bootstrapLSP(const dTyp *tobs, const dTyp *yobs, const dTyp *errs, 
+                  const int npts, Settings *settings, dTyp *mu, dTyp *sig) {
+    // allocate
+    dTyp *lsp_temp, *er;
+    int mind;
+    dTyp *maxvals  = (dTyp *)malloc(settings->nbootstraps * sizeof(dTyp));
+    dTyp *t = (dTyp *) malloc(npts * sizeof(dTyp));
+    dTyp *y = (dTyp *) malloc(npts * sizeof(dTyp));
+    if (errs != NULL)
+      er = (dTyp *) malloc(npts * sizeof(dTyp));
+    else
+      er = NULL;
+
+    for(int i = 0; i < settings->nbootstraps; i++) {
+      // sample with replacement
+      randomSample(npts, tobs, yobs, errs, t, y, er);
+
+      // do lomb scargle
+      if (settings->lsp_flags & FLOATING_MEAN)
+        lsp_temp = generalizedLombScargle(t, y, er, npts, settings);
+      else
+        lsp_temp = lombScargle(t, y, npts, settings);
+
+      // find max and store
+      mind = argmax(lsp_temp, settings->nfreqs);
+      maxvals[i] = lsp_temp[mind];
+    }
+
+    // get statistics (mean and variance) of bootstrapped peaks
+    meanAndVariance(settings->nbootstraps, maxvals, mu, sig);
+
+    // convert variance to stddev
+    *sig = sqrt(*sig);
+
+    // clean up after ourselves
+    free(t); free(y); free(er); free(maxvals);
+
+}
+
 // read lightcurve file and compute periodogram
 void lombScargleFromLightcurveFile(Settings *settings) {
-  dTyp *tobs, *yobs, *lsp, *frqs;
+  dTyp *tobs, *yobs, *lspt, *frqs, *errs;
   int npts;
   
   // Read lightcurve
-  readLC(settings->in, &tobs, &yobs, &npts);
+  readLC(settings->in, &tobs, &yobs, &errs, &npts);
   
   // force grid to be power of two if necessary
-        // this will correct "over" (and "nfreqs")
-        if (settings->lsp_flags & FORCE_POWER_OF_TWO)
-                getNfreqsAndCorrOversampling(npts, settings);
+  // this will correct "over" (and "nfreqs")
+  if (settings->lsp_flags & FORCE_POWER_OF_TWO)
+    getNfreqsAndCorrOversampling(npts, settings);
   else {
     settings->over   = settings->over0;
-          settings->nfreqs = (int)floor(0.5 * settings->over 
+    settings->nfreqs = (int)floor(0.5 * settings->over 
           * settings->hifac * npts);
   }
 
@@ -122,14 +201,32 @@ void lombScargleFromLightcurveFile(Settings *settings) {
   frqs = getFrequencies(tobs, npts, settings);
   
   // compute periodogram
-  lsp = lombScargle(tobs, yobs, npts, settings);
+  if (settings->lsp_flags & FLOATING_MEAN)
+    lspt = generalizedLombScargle(tobs, yobs, errs, npts, settings);
+  else
+    lspt = lombScargle(tobs, yobs, npts, settings);
+
+  // transfer memory out of the workspace
+  dTyp *lsp = (dTyp *) malloc(settings->nfreqs * sizeof(dTyp));
+  memcpy(lsp, lspt, settings->nfreqs * sizeof(dTyp));
+
+  // perform bootstrapping if requested
+  dTyp mu, sig;
+  if (settings->nbootstraps > 0)  
+    bootstrapLSP(tobs, yobs, errs, npts, settings, &mu, &sig);  
   
+
   // find peak
   int max_ind = argmax(lsp, settings->nfreqs);
 
   // write peak
-  dTyp fap = probability(lsp[max_ind], npts, settings->nfreqs, 
-            settings->over);
+  dTyp fap;
+  if (settings->nbootstraps > 0)
+    fap    = erfc((lsp[max_ind] - mu) / sig);
+  else
+    fap    = probability(lsp[max_ind], npts, settings->nfreqs, 
+                         settings->over);
+
   if (settings->lsp_flags & VERBOSE ) 
     fprintf(stderr, "%s: max freq: %.3e, false alarm probability: %.3e\n", 
               settings->filename_in, frqs[max_ind], fap);
@@ -149,9 +246,10 @@ void lombScargleFromLightcurveFile(Settings *settings) {
                 frqs[max_ind], fap);
   
 
-  free(tobs);
-  free(yobs);
-  free(frqs);
+  free(tobs); free(yobs); free(frqs); free(lsp);
+  if (errs != NULL)
+    free(errs);
+  
 }
 
 
@@ -160,7 +258,7 @@ void multipleLombScargle(Settings *settings) {
 
   int nlightcurves;
 
-        // get number of GPUs
+  // get number of GPUs
   int ngpus;
   checkCudaErrors(cudaGetDeviceCount(&ngpus));
 
@@ -312,9 +410,15 @@ void help(void *argtable[]) {
 
 // initialize before calculating LSP
 void init(Settings * settings, bool list_mode) {
+
+  // initialize random number generator for bootstrapping
+  if (settings->nbootstraps > 0) 
+    srand (time(NULL));
+
   // set GPU
-  if (settings->device != -1)
+  if (settings->device != -1) {
     checkCudaErrors(cudaSetDevice(settings->device));
+  }
   if (!list_mode) {
     // open lightcurve file and lsp file
     settings->in  = fopen(settings->filename_in, "r");
@@ -324,18 +428,28 @@ void init(Settings * settings, bool list_mode) {
     else
       settings->out = stdout;
 
+    // setting device if specified
+    if (settings->device != -1) {
+      checkCudaErrors(cudaSetDevice(settings->device));
+    }
+    else {
+      checkCudaErrors(cudaSetDevice(0));
+    }
+
     // set stream
     checkCudaErrors(cudaStreamCreate(&(settings->stream)));
-
-    // setting device if specified
-    if (settings->device != -1)
-      checkCudaErrors(cudaSetDevice(settings->device));
     
     // allocate host and device workspaces
     checkCudaErrors(cudaHostAlloc((void **) &(settings->host_workspace), 
       settings->host_memory,  cudaHostAllocDefault ));
     checkCudaErrors(cudaMalloc((void **) &(settings->device_workspace),
       settings->device_memory));
+
+    // memset workspaces to 0
+    checkCudaErrors(cudaMemsetAsync(settings->device_workspace, 0, 
+    	settings->device_memory, settings->stream));
+    memset(settings->host_workspace, 0, settings->host_memory);
+
   }
 }
 
@@ -378,7 +492,7 @@ int main(int argc, char *argv[]){
           "oversample factor");
   struct arg_dbl *hifac     = arg_dbl0(NULL, "hifac",    "<hifac>",         
           "max frequency = hifac * nyquist frequency");
-  struct arg_dbl *thresh    = arg_dbl0(NULL, "thresh",    "<hifac>",         
+  struct arg_dbl *thresh    = arg_dbl0(NULL, "thresh",    "<fap_threshold>",         
           "will save lsp if and only if the false alarm probability"
           " is below 'thresh'");
   struct arg_int *mem       = arg_int0("m", "memory-per-thread", "<MB>",
@@ -390,9 +504,14 @@ int main(int argc, char *argv[]){
   struct arg_int *nth       = arg_int0(NULL, "nthreads", "<nthreads>",
           "number of openmp threads "
           "(tip: use a number >= number of GPU's)");
+  struct arg_int *btstrp    = arg_int0("b", "nbootstraps","<nbootstraps>",
+          "number of bootstrapped samples to use for significance testing");  
   // flags
   struct arg_lit *pow2      = arg_lit0(NULL, "pow2,power-of-two", 
           "force nfreqs to be a power of 2");
+  struct arg_lit *flmean    = arg_lit0("G", "floating-mean", 
+          "use a floating mean (slightly slower, "
+          "but more statistically robust)");
   struct arg_lit *timing    = arg_lit0(NULL, "print-timing", 
           "print calculation times");
   struct arg_lit *verb      = arg_lit0("v",  "verbose", 
@@ -410,7 +529,7 @@ int main(int argc, char *argv[]){
   struct arg_end *end = arg_end(20);
 
   void *argtable[] = { hlp, vers, in, inlist, out, outlist, over, 
-           hifac, thresh, dev, mem, nth, pow2, timing, verb, 
+           hifac, thresh, dev, mem, nth, btstrp, pow2, flmean, timing, verb, 
            savemax, dsavelsp, end };
   
   // check that argtable didn't raise any memory problems
@@ -500,20 +619,19 @@ int main(int argc, char *argv[]){
     settings->lsp_flags  |= VERBOSE;
   if (thresh->count     == 1)
     settings->lsp_flags  |= SAVE_IF_SIGNIFICANT;
-  
-  if (settings->lsp_flags & TIMING)
-    settings->nfft_flags |= PRINT_TIMING;
-
+  if (flmean->count     == 1)
+    settings->lsp_flags  |= FLOATING_MEAN;
 
 
   ////////////////////
   // parameters
-        int MB = 1048576;
-  settings->over0    = over->count   == 1 ? (dTyp) over->dval[0]   :   1;
-  settings->hifac    = hifac->count  == 1 ? (dTyp) hifac->dval[0]  :   1;
-  settings->device   = dev->count    == 1 ? (int)  dev->ival[0]    :  -1;
-  settings->nthreads = nth->count    == 1 ? (int)  nth->ival[0]    :   1;
-  settings->fthresh  = thresh->count == 1 ? (dTyp) thresh->dval[0] : 0.0;
+  int MB = 1048576;
+  settings->over0       = over->count   == 1 ? (dTyp) over->dval[0]   :   1;
+  settings->hifac       = hifac->count  == 1 ? (dTyp) hifac->dval[0]  :   1;
+  settings->device      = dev->count    == 1 ? (int)  dev->ival[0]    :  -1;
+  settings->nthreads    = nth->count    == 1 ? (int)  nth->ival[0]    :   1;
+  settings->fthresh     = thresh->count == 1 ? (dTyp) thresh->dval[0] : 0.0;
+  settings->nbootstraps = btstrp->count == 1 ? (int) btstrp->ival[0]  :   0;
   // set workspace memory
   int total_memory   = mem->count    == 1 ? (int)  mem->ival[0]*MB : 512 * MB;
   int x = settings->over0 * settings->hifac;
@@ -529,7 +647,8 @@ int main(int argc, char *argv[]){
     fprintf(stderr, "%-20s = %f\n", "thresh", settings->fthresh);
     fprintf(stderr, "%-20s = %d MB\n", "memory (host)", settings->host_memory/MB);
     fprintf(stderr, "%-20s = %d MB\n", "memory (device)", settings->device_memory/MB);
-    }
+    fprintf(stderr, "%-20s = %d\n", "nbootstraps", settings->nbootstraps);
+  }
     
   // RUN 
   init(settings, list_in);

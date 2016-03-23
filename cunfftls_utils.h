@@ -38,7 +38,10 @@ __host__ void getNfreqsAndCorrOversampling(int npts, Settings *settings);
 __host__ dTyp nextPowerOfTwo(dTyp v);
 
 // computes mean and variance of array y (of size n)
-__host__ void meanAndVariance(int n, const dTyp *y, dTyp *mean , dTyp *variance);
+__host__ void meanAndVariance(const int n, const dTyp *y, dTyp *mean , dTyp *variance);
+
+__host__ void weightedMeanAndVariance(const int n, const dTyp *y, 
+								const dTyp *w, dTyp *mean, dTyp *variance);
 
 // returns sign of a * abs(b)
 __device__ dTyp sign(dTyp a, dTyp b);
@@ -48,5 +51,11 @@ __device__ dTyp square(dTyp a);
 
 // converts clock_t value into seconds
 __host__ dTyp seconds(clock_t dt);
+
+// generates random sample of (tobs, yobs, erobs) with replacement, 
+// stores results in (t, y, er)
+__host__ void randomSample(const int npts, const dTyp *tobs, const dTyp *yobs, 
+					const dTyp *erobs, dTyp *t, dTyp *y, dTyp *er);
+
 
 #endif
