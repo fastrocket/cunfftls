@@ -28,7 +28,7 @@
 #include "cuna_typedefs.h"
 
 // max length of strings
-#define STRBUFFER 1024
+#define STRBUFFER 200
 
 // some precision-dependent definitions
 #ifdef DOUBLE_PRECISION
@@ -75,8 +75,9 @@ typedef struct {
 	char filename_in     [STRBUFFER];
 	char filename_out    [STRBUFFER];
 	char filename_outlist[STRBUFFER];
-	int device, nfreqs, nthreads, device_memory, 
-	    host_memory, nbootstraps;
+	int device, nfreqs, nthreads,nbootstraps;
+        size_t host_memory, device_memory;
+
 	dTyp over0, over, hifac, df, fthresh;
 	cudaStream_t stream;
 	void *host_workspace;

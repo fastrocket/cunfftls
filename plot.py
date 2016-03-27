@@ -101,7 +101,7 @@ def plot_lsp(lsp, title=None, fname='lsp.png', params=None):
 
 def make_fake_lcs(params, Nlcs):
 	l = open("list.dat", 'w')
-        l.write('%d'%Nlcs)
+        l.write('%d\n'%Nlcs)
         for i in range(Nlcs):
 		x, y = get_signal(params)
 		fname = "lcs/lc%05d.lc"%(i)
@@ -157,18 +157,18 @@ def test_gap(params):
 	lsp = get_lsp(x, y, **params)
 	plot_lsp(lsp, title='gap', fname='lsp_gap.png', params=params)
 
-#make_fake_lcs(Params, 1000)
+make_fake_lcs(Params, 1000)
 
 #print "TESTING SINGLE AND DOUBLE PRECISION"
 #test_single_double(Params)
 
-print "TESTING LIST OF FILES"
-Params['binary'] = 'cunfftlsf'
-test_list_of_files(Params)
+#print "TESTING LIST OF FILES"
+#Params['binary'] = 'cunfftlsf'
+#test_list_of_files(Params)
 
-print "TESTING FLOATING MEAN"
-Params['binary'] = 'cunfftlsf'
-test_floating_mean(Params)
+#print "TESTING FLOATING MEAN"
+#Params['binary'] = 'cunfftlsf'
+#test_floating_mean(Params)
 
 #print "TESTING GAP"
 #test_gap(Params)

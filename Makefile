@@ -34,9 +34,9 @@ DEFS := $(DEBUG) -DBLOCK_SIZE=$(BLOCK_SIZE) -DVERSION=\"$(VERSION)\"
 NVCCFLAGS := $(DEFS) $(OPTIMIZE_GPU) -Xcompiler -fopenmp -Xcompiler -fpic --gpu-architecture=compute_$(ARCH) --gpu-code=sm_$(ARCH),compute_$(ARCH) 
 CFLAGS := $(DEFS) -fPIC -fopenmp -Wall $(OPTIMIZE_CPU)
 
-CUDA_LIBS =`pkg-config --libs cudart-$(CUDA_VERSION)` 
+CUDA_LIBS =`pkg-config --libs cudart-$(CUDA_VERSION)` `pkg-config --libs curand-$(CUDA_VERSION)`
 
-CUDA_INCLUDE =`pkg-config --cflags cudart-$(CUDA_VERSION)`
+CUDA_INCLUDE =`pkg-config --cflags cudart-$(CUDA_VERSION)` `pkg-config --cflags curand-$(CUDA_VERSION)`
 
 LIBS := -L$(LIBDIR) -L$(CUNA_DIR)/lib $(CUDA_LIBS) -lm -lgomp
 

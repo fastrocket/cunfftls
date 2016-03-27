@@ -112,7 +112,7 @@ randomSample(const int npts, const dTyp *tobs, const dTyp *yobs,
   
   for (int i = 0; i < npts; i++) {
     u = rand() % npts;
-    t[i] = tobs[u];
+    t[i] = tobs[i];
     y[i] = yobs[u];
     if (erobs != NULL)
       er[i] = erobs[u];
