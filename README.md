@@ -24,7 +24,8 @@ the algorithm discussed in
 and borrows extensively from the associated codebase.
 
 #### Recent changes
-
+* **March 26, 2016**
+   * Bugfixes and simple test of bootstrapping; efficient (only one kernel call per set of bootstraps). Though this means that the number of bootstraps you can perform is limited by GPU/CPU memory. Will be changed to allow for multiple kernel calls when more bootsrtaps are desired.
 * **March 23, 2016**
    * option to use floating-mean periodogram (aka the Generalized LSP a la [Zechmeister & Kuerster 2008](http://www.aanda.org/articles/aa/abs/2009/11/aa11296-08/aa11296-08.html))
    * Bootstrapped significance tests **NOTE** -- this feature is buggy right now, avoid until later updates
