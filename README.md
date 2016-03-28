@@ -24,7 +24,11 @@ the algorithm discussed in
 and borrows extensively from the associated codebase.
 
 #### Recent changes
-
+* **March 26, 2016**
+   * fixed the bootstrapping method -- now bootstrapping is performed more efficiently, but there are two caveats currently:
+	1. None of this has been tested in a rigorous and complete way, so use at your own risk.
+	2. The random number generation is a little dubious, but very fast. Take a look at the **cuna** source code for more information.
+   * 
 * **March 23, 2016**
    * option to use floating-mean periodogram (aka the Generalized LSP a la [Zechmeister & Kuerster 2008](http://www.aanda.org/articles/aa/abs/2009/11/aa11296-08/aa11296-08.html))
    * Bootstrapped significance tests **NOTE** -- this feature is buggy right now, avoid until later updates

@@ -29,8 +29,6 @@
 #include <string.h>
 
 #include <cuComplex.h>
-//#include <curand.h>
-//#include <curand_kernel.h>
 
 #include "cuna.h"
 #include "cuna_filter.h"
@@ -244,6 +242,100 @@ lombScargle(const dTyp *tobs, const dTyp *yobs, int npts,
   checkCudaErrors(cudaMemcpyAsync(lsp, d_lsp, (ng/2) * (nbs + 1) * sizeof(dTyp), 
         cudaMemcpyDeviceToHost, settings->stream));
 //  checkCudaErrors(cudaStreamSynchronize(settings->stream));
+
+  return lsp;
+}
+
+// computes + returns pointer to periodogram
+__host__  dTyp *
+lombScargleBatch(const dTyp *tobs, const dTyp *yobs, int npts, 
+            Settings *settings) {
+
+  int ng = settings->nfreqs * 2;
+  int nbs = settings->nbootstraps;
+  
+  // calculate total host memory and ensure there's enough
+  size_t total_host_mem =        2 * npts * sizeof(dTyp)
+                     + (ng/2) * (nbs + 1) * sizeof(dTyp)
+                     +                      sizeof(filter_properties);
+
+  if (total_host_mem > settings->host_memory) {
+        eprint("total host memory allocated is %d bytes, but %d "
+                  "bytes are required to perform LSP", settings->host_memory, total_host_mem);
+        exit(EXIT_FAILURE);
+  }
+
+  // setup pointers
+  dTyp *t      = (dTyp *)  settings->host_workspace; // length npts
+  dTyp *y      = (dTyp *)(t          +        npts); // length npts 
+  dTyp *lsp    = (dTyp *)(y          +        npts); // length ng/2 * (nbs + 1)
+  filter_properties *fprops = (filter_properties *)(lsp +  (ng/2) * (nbs + 1));
+  
+  // scale t and y (zero mean, t \in [-1/2, 1/2))
+  dTyp var;
+  scaleTobs(tobs, npts, settings->over, t);
+  scaleYobs(yobs, npts, &var,           y);
+ 
+  // calculate total device memory and ensure we have enough 
+  size_t total_device_mem = total_host_mem 
+                       +     ng * (nbs + 3) * sizeof(Complex)
+                       +           2 * npts * sizeof(dTyp)
+                       +      FILTER_RADIUS * sizeof(dTyp);
+ 
+  if (total_device_mem > settings->device_memory) {
+        eprint("total device memory allocated is %d bytes, but %d "
+                  "bytes are required to perform LSP", settings->device_memory, total_device_mem);
+        exit(EXIT_FAILURE);
+  }
+  
+  // setup pointers
+  dTyp *d_t            = (dTyp *)settings->device_workspace; // length npts
+  dTyp *d_y            = (dTyp *)   (d_t          +   npts); // length npts
+  dTyp *d_lsp          = (dTyp *)   (d_y          +   npts); // length ng/2 *(nbs + 1)
+  filter_properties *d_fprops       = (filter_properties *)(d_lsp + (ng/2) * (nbs + 1));
+
+  fprops->E1           = (dTyp *)   (d_fprops     +      1); // length npts
+  fprops->E2           = (dTyp *)   (fprops->E1   +   npts); // length npts
+  fprops->E3           = (dTyp *)   (fprops->E2   +   npts); // length FILTER_RADIUS  
+  Complex *d_f_hat     = (Complex *)(fprops->E3   + FILTER_RADIUS); // length ng  * (nbs + 1)
+  Complex *d_f_hat_win = (Complex *)(d_f_hat      +     ng * (nbs + 1)); // length 2 * ng
+  
+  // transfer data to gpu
+  checkCudaErrors(cudaMemcpyAsync(settings->device_workspace, settings->host_workspace,
+        total_host_mem, cudaMemcpyHostToDevice, settings->stream));
+   
+  // checkCudaErrors(cudaStreamSynchronize(settings->stream));
+
+  // generate filter
+  generate_pinned_filter_properties(d_t, npts, ng, fprops, d_fprops, settings->stream); 
+  // checkCudaErrors(cudaGetLastError());
+  // checkCudaErrors(cudaStreamSynchronize(settings->stream));
+
+  // memset
+  checkCudaErrors(cudaMemsetAsync(d_f_hat, 0,  ng * (nbs + 3) * sizeof(Complex), settings->stream));
+  // checkCudaErrors(cudaStreamSynchronize(settings->stream));
+
+  // evaluate NFFT for signal & window
+  cunfft_adjoint_raw_async(d_t,  d_y, d_f_hat,     npts,     ng, d_fprops, settings->stream);
+  cunfft_adjoint_raw_async(d_t, NULL, d_f_hat_win, npts, 2 * ng, d_fprops, settings->stream); 
+  if (nbs > 0) {
+    cunfft_adjoint_raw_async_bootstrap(d_t,  d_y, d_f_hat + ng,     npts,     ng, nbs, d_fprops, settings->stream);
+    //cunfft_adjoint_raw_async_bootstrap(d_t, NULL, d_f_hat_win + 2 * ng, npts, 2 * ng, nbs, d_fprops, settings->stream); 
+    //checkCudaErrors(cudaStreamSynchronize(settings->stream));
+  }
+  // calculate number of CUDA blocks we need
+  size_t nblocks = (ng/2) * (nbs + 1)/ BLOCK_SIZE;
+  while (nblocks * BLOCK_SIZE < (ng/2) * (nbs + 1)) nblocks++;
+  
+  // convert to LSP
+  convertToLSP <<< nblocks, BLOCK_SIZE, 0, settings->stream >>> 
+           (d_f_hat, d_f_hat_win, var, ng/2, npts, nbs + 1, d_lsp);
+//  checkCudaErrors(cudaGetLastError());
+//  checkCudaErrors(cudaStreamSynchronize(settings->stream));
+
+  // Copy the results back to CPU memory
+  checkCudaErrors(cudaMemcpyAsync(lsp, d_lsp, (ng/2) * (nbs + 1) * sizeof(dTyp), 
+        cudaMemcpyDeviceToHost, settings->stream));
 
   return lsp;
 }
