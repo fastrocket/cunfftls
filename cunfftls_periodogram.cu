@@ -161,9 +161,13 @@ lombScargle(const dTyp *tobs, const dTyp *yobs, int npts,
   int ng = settings->nfreqs * 2;
   int nbs = settings->nbootstraps;
   
+  // for alignment purposes (GPU addresses must start at multiples of 8bytes)
+  int lsp_append = ((ng/2) * (nbs + 1)) % 2 == 0 ? 0 : 1;
+  int lc_append  =                 npts % 2 == 0 ? 0 : 1;
+  
   // calculate total host memory and ensure there's enough
-  size_t total_host_mem =        2 * npts * sizeof(dTyp)
-                     + (ng/2) * (nbs + 1) * sizeof(dTyp)
+  size_t total_host_mem =         2 * (npts + lc_append) * sizeof(dTyp)
+                     + ((ng/2) * (nbs + 1) + lsp_append) * sizeof(dTyp)
                      +                      sizeof(filter_properties);
 
   if (total_host_mem > settings->host_memory) {
@@ -172,11 +176,13 @@ lombScargle(const dTyp *tobs, const dTyp *yobs, int npts,
         exit(EXIT_FAILURE);
   }
 
+ 
+
   // setup pointers
   dTyp *t      = (dTyp *)  settings->host_workspace; // length npts
-  dTyp *y      = (dTyp *)(t          +        npts); // length npts 
-  dTyp *lsp    = (dTyp *)(y          +        npts); // length ng/2 * (nbs + 1)
-  filter_properties *fprops = (filter_properties *)(lsp +  (ng/2) * (nbs + 1));
+  dTyp *y      = (dTyp *)(t          +        npts + lc_append); // length npts 
+  dTyp *lsp    = (dTyp *)(y          +        npts + lc_append); // length ng/2 * (nbs + 1)
+  filter_properties *fprops = (filter_properties *)(lsp +  (ng/2) * (nbs + 1) + lsp_append);
   
   // scale t and y (zero mean, t \in [-1/2, 1/2))
   dTyp var;
@@ -186,7 +192,7 @@ lombScargle(const dTyp *tobs, const dTyp *yobs, int npts,
   // calculate total device memory and ensure we have enough 
   size_t total_device_mem = total_host_mem 
                        +     ng * (nbs + 3) * sizeof(Complex)
-                       +           2 * npts * sizeof(dTyp)
+                       +           2 * (npts + lc_append) * sizeof(dTyp)
                        +      FILTER_RADIUS * sizeof(dTyp);
  
   if (total_device_mem > settings->device_memory) {
@@ -197,13 +203,13 @@ lombScargle(const dTyp *tobs, const dTyp *yobs, int npts,
   
   // setup pointers
   dTyp *d_t            = (dTyp *)settings->device_workspace; // length npts
-  dTyp *d_y            = (dTyp *)   (d_t          +   npts); // length npts
-  dTyp *d_lsp          = (dTyp *)   (d_y          +   npts); // length ng/2 *(nbs + 1)
-  filter_properties *d_fprops       = (filter_properties *)(d_lsp + (ng/2) * (nbs + 1));
+  dTyp *d_y            = (dTyp *)   (d_t          +   npts + lc_append); // length npts
+  dTyp *d_lsp          = (dTyp *)   (d_y          +   npts + lc_append); // length ng/2 *(nbs + 1)
+  filter_properties *d_fprops       = (filter_properties *)(d_lsp + (ng/2) * (nbs + 1) + lsp_append);
 
   fprops->E1           = (dTyp *)   (d_fprops     +      1); // length npts
-  fprops->E2           = (dTyp *)   (fprops->E1   +   npts); // length npts
-  fprops->E3           = (dTyp *)   (fprops->E2   +   npts); // length FILTER_RADIUS  
+  fprops->E2           = (dTyp *)   (fprops->E1   +   npts + lc_append); // length npts
+  fprops->E3           = (dTyp *)   (fprops->E2   +   npts + lc_append); // length FILTER_RADIUS  
   Complex *d_f_hat     = (Complex *)(fprops->E3   + FILTER_RADIUS); // length ng  * (nbs + 1)
   Complex *d_f_hat_win = (Complex *)(d_f_hat      +     ng * (nbs + 1)); // length 2 * ng
   
@@ -211,7 +217,7 @@ lombScargle(const dTyp *tobs, const dTyp *yobs, int npts,
   checkCudaErrors(cudaMemcpyAsync(settings->device_workspace, settings->host_workspace,
         total_host_mem, cudaMemcpyHostToDevice, settings->stream));
    
-  // checkCudaErrors(cudaStreamSynchronize(settings->stream));
+  //checkCudaErrors(cudaStreamSynchronize(settings->stream));
 
   // generate filter
   generate_pinned_filter_properties(d_t, npts, ng, fprops, d_fprops, settings->stream); 
@@ -273,10 +279,14 @@ generalizedLombScargle(const dTyp *tobs, const dTyp *yobs, const dTyp *errs, int
 
   int ng = settings->nfreqs * 2;
   int nbs = settings->nbootstraps;
+
+  // for alignment purposes (GPU addresses must start at multiples of 8bytes)
+  int lsp_append = ((ng/2) * (nbs + 1)) % 2 == 0 ? 0 : 1;
+  int lc_append  =                 npts % 2 == 0 ? 0 : 1;
   
   // calculate total host memory and ensure there's enough
-  size_t total_host_mem =          3 * npts * sizeof(dTyp)
-                     +   (ng/2) * (nbs + 1) * sizeof(dTyp)
+  size_t total_host_mem =          3 * (npts + lc_append) * sizeof(dTyp)
+                     +  ((ng/2) * (nbs + 1) + lsp_append) * sizeof(dTyp)
                      +                        sizeof(filter_properties);
 
   if (total_host_mem > settings->host_memory) {
@@ -287,10 +297,10 @@ generalizedLombScargle(const dTyp *tobs, const dTyp *yobs, const dTyp *errs, int
 
   // setup (host) pointers
   dTyp *t      = (dTyp *)  settings->host_workspace; // length npts
-  dTyp *y      = (dTyp *)(t          +        npts); // length npts 
-  dTyp *w      = (dTyp *)(y          +        npts); // length npts
-  dTyp *lsp    = (dTyp *)(w          +        npts); // length ng/2 * (nbs + 1)
-  filter_properties *fprops = (filter_properties *)(lsp + (ng/2) * (nbs + 1));
+  dTyp *y      = (dTyp *)(t          +        npts + lc_append); // length npts 
+  dTyp *w      = (dTyp *)(y          +        npts + lc_append); // length npts
+  dTyp *lsp    = (dTyp *)(w          +        npts + lc_append); // length ng/2 * (nbs + 1)
+  filter_properties *fprops = (filter_properties *)(lsp + (ng/2) * (nbs + 1) + lsp_append);
   
   // scale t and y (zero weighted mean, t \in [-1/2, 1/2))
   dTyp var;
@@ -301,7 +311,7 @@ generalizedLombScargle(const dTyp *tobs, const dTyp *yobs, const dTyp *errs, int
   // calculate total device memory and ensure we have enough 
   size_t total_device_mem = total_host_mem 
                        + 3 * (nbs + 1) * ng * sizeof(Complex)
-                       +           2 * npts * sizeof(dTyp)
+                       +           2 * (npts + lc_append) * sizeof(dTyp)
                        +      FILTER_RADIUS * sizeof(dTyp);
  
   if (total_device_mem > settings->device_memory) {
@@ -312,14 +322,14 @@ generalizedLombScargle(const dTyp *tobs, const dTyp *yobs, const dTyp *errs, int
   
   // setup (device) pointers
   dTyp *d_t            = (dTyp *)settings->device_workspace; // length npts
-  dTyp *d_y            = (dTyp *)   (d_t          +   npts); // length npts
-  dTyp *d_w            = (dTyp *)   (d_y          +   npts); // length npts
-  dTyp *d_lsp          = (dTyp *)   (d_w          +   npts); // length ng/2 * (nbs + 1)
-  filter_properties *d_fprops       = (filter_properties *)(d_lsp + (ng/2) * (nbs + 1));
+  dTyp *d_y            = (dTyp *)   (d_t          +   npts + lc_append); // length npts
+  dTyp *d_w            = (dTyp *)   (d_y          +   npts + lc_append); // length npts
+  dTyp *d_lsp          = (dTyp *)   (d_w          +   npts + lc_append); // length ng/2 * (nbs + 1)
+  filter_properties *d_fprops       = (filter_properties *)(d_lsp + (ng/2) * (nbs + 1) + lsp_append);
 
   fprops->E1           = (dTyp *)   (d_fprops     +      1); // length npts
-  fprops->E2           = (dTyp *)   (fprops->E1   +   npts); // length npts
-  fprops->E3           = (dTyp *)   (fprops->E2   +   npts); // length FILTER_RADIUS  
+  fprops->E2           = (dTyp *)   (fprops->E1   +   npts + lc_append); // length npts
+  fprops->E3           = (dTyp *)   (fprops->E2   +   npts + lc_append); // length FILTER_RADIUS  
   Complex *d_f_hat     = (Complex *)(fprops->E3   + FILTER_RADIUS); // length ng * (nbs + 1) 
   Complex *d_f_hat_win = (Complex *)(d_f_hat      + (nbs + 1) * ng); // length 2 * ng * (nbs + 1)
   

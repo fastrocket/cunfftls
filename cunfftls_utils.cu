@@ -118,3 +118,4 @@ randomSample(const int npts, const dTyp *tobs, const dTyp *yobs,
       er[i] = erobs[u];
   }
 }
+

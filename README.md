@@ -1,4 +1,4 @@
-# CUNFFTLS v1.3: CUDA Lomb Scargle implementation
+# CUNFFTLS v1.4: CUDA Lomb Scargle implementation
 
 ### (c) 2016, John Hoffman
 ### jah5@princeton.edu
@@ -24,10 +24,14 @@ the algorithm discussed in
 and borrows extensively from the associated codebase.
 
 #### Recent changes
+* **March 28, 2016**
+   * Fixed a memory alignment bug that arose with certain values for the number of observations
+   * Did more testing, this time with randomly generated lightcurves containing Nobs values between 10 and 10,000; no bugs found
+   * Memory management at this point is a headache; will try to tackle this in future releases.
 * **March 26, 2016**
    * fixed the bootstrapping method -- now bootstrapping is performed more efficiently, but there are two caveats currently:
-	1. None of this has been tested in a rigorous and complete way, so use at your own risk.
-	2. The random number generation is a little dubious, but very fast. Take a look at the **cuna** source code for more information.
+	     1. None of this has been tested in a rigorous and complete way, so use at your own risk.
+	     2. The random number generation is a little dubious, but very fast. Take a look at the **cuna** source code for more information.
    * The bootstrap calculations are also run on a single kernel, so memory limits the number of bootstraps that can currently be performed. Future versions will allow for multiple kernel calls to remove this constraint. 
 * **March 23, 2016**
    * option to use floating-mean periodogram (aka the Generalized LSP a la [Zechmeister & Kuerster 2008](http://www.aanda.org/articles/aa/abs/2009/11/aa11296-08/aa11296-08.html))
@@ -39,27 +43,33 @@ and borrows extensively from the associated codebase.
 
 ```
 $ ./cunfftls --help
-Usage: ./cunfftlsf  [-hGvsd] [--version] [--in=<filename_in>] [--list-in=<list_in>] [--out=<filename_out>] [--list-out=<list_out>] [--over=<oversampling>] [--hifac=<hifac>] [--thresh=<hifac>] [--device=<device>] [-m <MB>] [--nthreads=<nthreads>] [--pow2] [--print-timing]
+Usage: ./cunfftlsf  [-hGvsd] [--version] [--in=<string>] [--list-in=<string>] 
+                    [--out=<string>] [--list-out=<string>] [--over=<float>] 
+                    [--hifac=<float>] [--thresh=<float>] [--device=<int>] 
+                    [-m <float, in MB>] [--nthreads=<int>] [-b <int>] 
+                    [--pow2] [--print-timing]
 
 ./cunfftlsf uses the NFFT adjoint operation to perform fast Lomb-Scargle calculations on GPU(s).
 
   -h, --help                display usage/options
       --version             display version
-      --in=<filename_in>    input file
-      --list-in=<list_in>   filename containing list of input files
-      --out=<filename_out>  output file
-      --list-out=<list_out> filename to save peak LSP for each lightcurve
-      --over=<oversampling> oversample factor
-      --hifac=<hifac>       max frequency = hifac * nyquist frequency
-      --thresh=<hifac>      will save lsp if and only if the false alarm probab
+      --in=<string>         input file
+      --list-in=<string>    filename containing list of input files
+      --out=<string>        output file
+      --list-out=<string>   filename to save peak LSP for each lightcurve
+      --over=<float>        oversample factor
+      --hifac=<float>       max frequency = hifac * nyquist frequency
+      --thresh=<float>      will save lsp if and only if the false alarm probab
                             ility is below 'thresh'
-      --device=<device>     device number (setting this forces this device to b
+      --device=<int>        device number (setting this forces this device to b
                             e the *only* device used)
-  -m, --memory-per-thread=<MB> 
+  -m, --memory-per-thread=<float, in MB> 
                             workspace (pinned) memory allocated for each thread
                             /stream
-      --nthreads=<nthreads> number of openmp threads (tip: use a number >= numb
+      --nthreads=<int>      number of openmp threads (tip: use a number >= numb
                             er of GPU's)
+  -b, --nbootstraps=<int>   number of bootstrapped samples to use for significa
+                            nce testing
       --pow2, --power-of-two 
                             force nfreqs to be a power of 2
   -G, --floating-mean       use a floating mean (slightly slower, but more stat
@@ -68,6 +78,8 @@ Usage: ./cunfftlsf  [-hGvsd] [--version] [--in=<filename_in>] [--list-in=<list_i
   -v, --verbose             more output
   -s, --save-maxp           save max(LSP) for all lightcurves
   -d, --dont-save-lsp       do not save full LSP
+
+
  ```
 
 #### Mode 1: single lightcurve

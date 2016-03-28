@@ -57,5 +57,26 @@ __host__ dTyp seconds(clock_t dt);
 __host__ void randomSample(const int npts, const dTyp *tobs, const dTyp *yobs, 
 					const dTyp *erobs, dTyp *t, dTyp *y, dTyp *er);
 
+// find the index of maximum element
+int inline argmax(const dTyp *x, const int n){
+  int m = 0;
+  for(int i = 0; i < n; i++) {
+    if (x[i] > x[m]) {
+      m = i;
+    }
+  }
+  return m;
+}
+
+// find the maximum value of an array
+dTyp inline maxval(const dTyp *x, const int n) {
+  dTyp m = x[0];
+  for(int i = 0; i < n; i++) {
+    if (x[i] > m) {
+      m = x[i];
+    }
+  }
+  return m;
+}
 
 #endif
