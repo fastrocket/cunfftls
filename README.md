@@ -25,7 +25,10 @@ and borrows extensively from the associated codebase.
 
 #### Recent changes
 * **March 26, 2016**
-   * Bugfixes and simple test of bootstrapping; efficient (only one kernel call per set of bootstraps). Though this means that the number of bootstraps you can perform is limited by GPU/CPU memory. Will be changed to allow for multiple kernel calls when more bootsrtaps are desired.
+   * fixed the bootstrapping method -- now bootstrapping is performed more efficiently, but there are two caveats currently:
+	1. None of this has been tested in a rigorous and complete way, so use at your own risk.
+	2. The random number generation is a little dubious, but very fast. Take a look at the **cuna** source code for more information.
+   * The bootstrap calculations are also run on a single kernel, so memory limits the number of bootstraps that can currently be performed. Future versions will allow for multiple kernel calls to remove this constraint. 
 * **March 23, 2016**
    * option to use floating-mean periodogram (aka the Generalized LSP a la [Zechmeister & Kuerster 2008](http://www.aanda.org/articles/aa/abs/2009/11/aa11296-08/aa11296-08.html))
    * Bootstrapped significance tests **NOTE** -- this feature is buggy right now, avoid until later updates
