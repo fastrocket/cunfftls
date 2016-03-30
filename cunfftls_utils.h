@@ -28,6 +28,20 @@
 
 #include "cunfftls_typedefs.h"
 
+// sorting
+typedef struct {
+    int index;
+    dTyp value;
+} element;
+
+int compare_elements_reverse(const void *a, const void *b);
+
+__host__ void argsort(dTyp *arr, int *inds, int nmembers);
+
+// peak finding
+__global__ void findPeaksGPU(const dTyp *x, int *p, const int n, const dTyp thresh);
+__host__ void findPeaksCPU(const dTyp *x, int *p, int *npeaks, const int n, const dTyp thresh);
+
 // sets CUDA device
 __host__ void set_device(int device);
 

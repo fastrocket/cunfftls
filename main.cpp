@@ -61,6 +61,8 @@ dTyp * getFrequencies(dTyp *x, int npts, Settings *settings) {
 
 }
 
+
+
 // Read lightcurve from filestream
 void readLC(FILE *in, dTyp **tobs, dTyp **yobs, dTyp **errs, int *npts) {
   
@@ -86,10 +88,6 @@ void readLC(FILE *in, dTyp **tobs, dTyp **yobs, dTyp **errs, int *npts) {
     exit(EXIT_FAILURE);
   }
   
-  // allocate memory
-  //bool append = (*npts % 2 != 0);
-  //if (append) (*npts)++;
-   
   *tobs = (dTyp *)malloc(*npts* sizeof(dTyp));
   *yobs = (dTyp *)malloc(*npts* sizeof(dTyp));
 
@@ -129,12 +127,6 @@ void readLC(FILE *in, dTyp **tobs, dTyp **yobs, dTyp **errs, int *npts) {
     } 
     lineno ++ ;
   }
-
-  //if (append) {
-  //  (*tobs)[*npts] = (*tobs)[*npts - 1];
-  //  (*yobs)[*npts] = (*yobs)[*npts - 1];
-  //  if (ncols == 3) (*errs)[*npts] = (*errs)[*npts - 1];
-  //}
 }
 
 // analyze set of bootstraps & store mean & standard deviation of max(powers)
@@ -155,6 +147,52 @@ void analyzeBootstraps(const dTyp *bootstraps, const int nfreqs, const int nlsp,
 
    // free array of max(powers)
    free(maxp);
+}
+
+#define sqrt2 1.41421356237
+#define probabilityBootstrap(x, mu, sig) \
+	0.5 * ( 1 + erf(-(x - mu) / (sqrt2 * sig)))
+
+
+void getPeaks(dTyp *lsp, int **peaks, int *npeaks, dTyp cutoff, Settings *settings) {
+
+  // find secondary peaks
+  *peaks = NULL;
+  *npeaks = 0;
+  if (settings->npeaks == 0) return;
+
+  // peak_check[i] is 1 when lsp[i] is a peak > threshold and 0 otherwise
+  int *peak_check = (int *)malloc(settings->nfreqs * sizeof(int));
+
+  // find the peaks	
+  findPeaksCPU(lsp, peak_check, npeaks, settings->nfreqs, cutoff);
+
+  // if only one peak (global max), return
+  if (*npeaks == 1) {
+    *npeaks = 0;
+    return;
+  }
+  
+  // store the indices
+  *peaks = (int *) malloc(*npeaks * sizeof(int));
+  int p = 0;
+  for (int i = 0; i < settings->nfreqs; i++) 
+    if ( peak_check[i] == 1 ) { (*peaks)[p] = i; p++; }
+	
+  // sort the peaks by significance (most to least significant)
+  argsort(lsp, *peaks, *npeaks);
+  
+  // skip global max
+  (*npeaks)--;
+  for (int i = 0; i < *npeaks; i++)
+     (*peaks)[i] = (*peaks)[i+1];
+  
+  // set the number of peaks to min(npeaks, settings->npeaks)	
+  if (*npeaks > settings->npeaks)
+    *npeaks = settings->npeaks;
+
+  // free peak_check memory
+  free(peak_check);
 }
 
 // read lightcurve file and compute periodogram
@@ -204,16 +242,6 @@ void lombScargleFromLightcurveFile(Settings *settings) {
   dTyp *lsp = (dTyp *) malloc(settings->nfreqs * (settings->nbootstraps + 1) * sizeof(dTyp));
   memcpy(lsp, lspt, settings->nfreqs * (settings->nbootstraps + 1) * sizeof(dTyp));
 
-  if (settings->lsp_flags & VERBOSE)
-	  fprintf(stderr, "finding peaks\n");
-
-  // find peak
-  int mmax = argmax(lsp, settings->nfreqs);
-  dTyp pbest = lsp[mmax];
-  dTyp fbest = frqs[mmax];
-
-  if (settings->lsp_flags & VERBOSE)
-  	fprintf(stderr, "mmax = %d, pbest = %e, fbest = %e\n", mmax, pbest, fbest);
 
   //perform bootstrapping if requested
   dTyp mu, sig;
@@ -223,15 +251,42 @@ void lombScargleFromLightcurveFile(Settings *settings) {
 	  dTyp *bootstraps = lsp + settings->nfreqs;
 	  analyzeBootstraps(bootstraps, settings->nfreqs, settings->nbootstraps, &mu, &sig);
   }
-  	
+
   if (settings->lsp_flags & VERBOSE)
-	  fprintf(stderr, "mu = %e, sig = %e\nanalyzing bootstraps..\n", mu, sig);
+	  fprintf(stderr, "finding peaks\n");
 
+  // find max
+  int mmax = argmax(lsp, settings->nfreqs);
+  dTyp pbest = lsp[mmax];
+  dTyp fbest = frqs[mmax];
 
-  // write peak
+  if (settings->lsp_flags & VERBOSE)
+  	fprintf(stderr, "mmax = %d, pbest = %e, fbest = %e\n", mmax, pbest, fbest);
+
+  // find secondary peaks
+  int *peaks = NULL;
+  int npeaks = 0;
+  if (settings->npeaks > 0) {
+
+     // cutoff is the Pn value associated with the seletced significance criterion
+     dTyp cutoff;
+     if (settings->nbootstraps > 0) 	
+        cutoff = getPnCutoffBootstrap(settings->peak_significance, mu, sig);
+     else
+        cutoff = getPnCutoff(settings->peak_significance, npts, 
+					settings->nfreqs, settings->over);
+       
+     getPeaks(lsp, &peaks, &npeaks, cutoff, settings);
+     if (settings->lsp_flags & VERBOSE)
+	fprintf(stderr, "found %d peaks (%.5e, %.5e, ...)\n", npeaks, 
+		npeaks > 0 ? frqs[peaks[0]] : -1,
+		npeaks > 1 ? frqs[peaks[1]] : -1);
+  }
+
+  // calculate fap values
   dTyp fap;
   if (settings->nbootstraps > 0)
-    fap    = 0.5 * ( 1 + erf(-(pbest - mu) / (sqrt(2) * sig)));
+    fap    = probabilityBootstrap(pbest, mu, sig);
   else
     fap    = probability(pbest, npts, settings->nfreqs, 
                          settings->over);
@@ -246,21 +301,47 @@ void lombScargleFromLightcurveFile(Settings *settings) {
       //        lsp is significant
       || (settings->lsp_flags & SAVE_IF_SIGNIFICANT 
         && fap < settings->fthresh) ) {
+
+     settings->out = fopen(settings->filename_out, "w");
+     fprintf(settings->out, "#best freq | false alarm probability\n"
+			    "#%.5e %.5e\n", fbest, fap); 
      for(int i = 0; i < settings->nfreqs; i++) 
         fprintf(settings->out, "%e %e\n", frqs[i], lsp[i]);
+     fclose(settings->out);
   }
-  // save peak + false alarm probability
-  if(settings->lsp_flags & SAVE_MAX_LSP) 
-    fprintf(settings->outlist, "%s %.5e %.5e\n", settings->filename_in, 
+
+  
+  // save peak(s) + false alarm probability(s)
+  if(settings->lsp_flags & SAVE_MAX_LSP) {
+    fprintf(settings->outlist, "%s %.5e %.5e", settings->filename_in, 
                 fbest, fap);
+
+    dTyp frequency, false_alarm;
+    for (int i = 0; i < settings->npeaks; i++) {
+      if (npeaks <= i) {
+        frequency = -1;
+        false_alarm = -1;
+      } else {
+	frequency = frqs[peaks[i]];
+	if (settings->nbootstraps > 0) 
+	  false_alarm = probabilityBootstrap(lsp[peaks[i]], mu, sig);
+	else
+	  false_alarm = probability(lsp[peaks[i]], npts, settings->nfreqs, settings->over);
+      }
+      fprintf(settings->outlist, " %.5e %.5e", frequency, false_alarm);
+    }
+    fprintf(settings->outlist, "\n");
+  }
   
   if (settings->lsp_flags & VERBOSE)
 	  fprintf(stderr, "freeing memory...\n");
-
+  
+  // free memory
   free(tobs); free(yobs); free(frqs); free(lsp);
   if (errs != NULL)
     free(errs);
-  
+  if (peaks != NULL) 
+    free(peaks);
 }
 
 
@@ -341,17 +422,14 @@ void multipleLombScargle(Settings *settings) {
       // open lightcurve file
       thread_settings->in = fopen(thread_settings->filename_in, "r");
 
-      // open lsp file if we're saving the LSP
-      if (thread_settings->lsp_flags & SAVE_FULL_LSP) {
-        
-        // write filename (TODO: allow user to customize)
-        sprintf(thread_settings->filename_out, "%s.lsp", 
+      // write filename (TODO: allow user to customize)
+      sprintf(thread_settings->filename_out, "%s.lsp", 
               thread_settings->filename_in);
-  
-        // open lsp file
+
+      // open lsp file if we're saving the LSP
+      if (thread_settings->lsp_flags & SAVE_FULL_LSP)
         thread_settings->out = 
             fopen(thread_settings->filename_out, "w");
-      }
       
       // compute lomb scargle (which will also save lsp to file)
       lombScargleFromLightcurveFile(thread_settings);
@@ -509,6 +587,11 @@ int main(int argc, char *argv[]){
   struct arg_dbl *thresh    = arg_dbl0(NULL, "thresh",    "<float>",         
           "will save lsp if and only if the false alarm probability"
           " is below 'thresh'");
+  struct arg_dbl *peaksig   = arg_dbl0(NULL, "peak-thresh", "<float>",
+          "FAP threshold for peak to be considered significant");
+  
+  struct arg_int *peaks     = arg_int0(NULL, "npeaks", "<int>",
+          "number of secondary peaks to save");
   struct arg_int *mem       = arg_int0("m", "memory-per-thread", "<float, in MB>",
           "workspace (pinned) memory allocated "
           "for each thread/stream");
@@ -543,8 +626,8 @@ int main(int argc, char *argv[]){
   struct arg_end *end = arg_end(20);
 
   void *argtable[] = { hlp, vers, in, inlist, out, outlist, over, 
-           hifac, thresh, dev, mem, nth, btstrp, pow2, flmean, timing, verb, 
-           savemax, dsavelsp, end };
+           hifac, peaks, peaksig, thresh, dev, mem, nth, btstrp, 
+           pow2, flmean, timing, verb, savemax, dsavelsp, end };
   
   // check that argtable didn't raise any memory problems
   if (arg_nullcheck(argtable) != 0) {
@@ -646,6 +729,8 @@ int main(int argc, char *argv[]){
   settings->nthreads    = nth->count    == 1 ? (size_t)  nth->ival[0]    :   1;
   settings->fthresh     = thresh->count == 1 ? (dTyp) thresh->dval[0] : 0.0;
   settings->nbootstraps = btstrp->count == 1 ? (size_t) btstrp->ival[0]  :   0;
+  settings->npeaks      = peaks->count  == 1 ? (int)  peaks->ival[0] : 0;
+  settings->peak_significance = peaksig->count == 1 ? (dTyp) peaksig->dval[0] : 0;
 
   // set workspace memory
   size_t total_memory   = mem->count    == 1 ? (size_t)  mem->ival[0] : 512;

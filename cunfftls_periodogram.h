@@ -40,4 +40,8 @@ probability(dTyp Pn, int npts, int nfreqs, dTyp over);
 
 __host__ dTyp 
 logProba(dTyp Pn, int npts, int nfreqs, dTyp over);
+
+__host__ dTyp getPnCutoffBootstrap(dTyp proba, dTyp mu, dTyp sig);
+
+__host__ dTyp getPnCutoff(dTyp proba, int npts, int nfreqs, dTyp over);
 #endif

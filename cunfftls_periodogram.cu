@@ -423,3 +423,62 @@ __host__ dTyp logProba(dTyp Pn, int npts, int nfreqs, dTyp over) {
   else
 	return log10(proba);
 }
+
+__host__ dTyp sgn(dTyp x) {
+	if (x < 0) return -1.0;
+	return 1.0;
+}
+
+// FROM: http://www.spraak.org/documentation/doxygen/src/lib/math/erfinv.c/view
+dTyp spr_math_fast_erfinv(dTyp x)
+/*
+Calculate the inverse error function.
+The fast version is only correct up to 6 digits.
+*/
+{dTyp tmp;
+ int   neg;
+ /**/
+ if((neg=(x < 0.0)))
+   x = -x;
+ if(x <= 0.7)
+  {tmp = x*x;
+   x *= (((-0.140543331*tmp+0.914624893)*tmp-1.645349621)*tmp+0.886226899)/((((0.012229801*tmp-0.329097515)*tmp+1.442710462)*tmp-2.118377725)*tmp+1.0);
+  }
+ else
+  {tmp = sqrt(-log(0.5*(1.0-x)));
+   x = (((1.641345311*tmp+3.429567803)*tmp-1.624906493)*tmp-1.970840454)/((1.637067800*tmp+3.543889200)*tmp+1.0);
+  }
+ return(neg?-x:x);
+}
+//////////////////////////////////////////////////////////
+
+
+/* approximation for inverse erf function (Wikipedia)
+__host__ dTyp erfinverse(dTyp x) {
+	dTyp inva = 1.0/0.147;
+	dTyp b = 2.0 * inva / PI;
+	dTyp c = log(1 - x * x);
+	dTyp A = b + 0.5 * c;
+	dTyp B = c * inva;
+	return sgn(x) * sqrt(sqrt( A * A - B ) - A);
+}*/
+
+// getPnCutoff for bootstraps (need erfinv function that is not in math.h)
+__host__ dTyp getPnCutoffBootstrap(dTyp proba, dTyp mu, dTyp sig) {
+	return mu - sqrt(2) * sig * spr_math_fast_erfinv(2 * proba - 1);
+}
+
+
+// inverts the above formulae to provide the Pn value associated with a given FAP
+__host__ dTyp getPnCutoff(dTyp proba, int npts, int nfreqs, dTyp over) {
+	if (proba < EPSILON) {
+		dTyp a = 0.5 * over * proba / nfreqs;
+		dTyp b = 1 - pow(a, 2./(npts - 3));
+		return 0.5 * b * ((dTyp)npts / ( npts - 1.0 ));
+	} else {
+		dTyp a = pow(1 - proba, 0.5 * over / nfreqs);
+		dTyp b = pow(1 - a, 2./(npts - 3));
+		return 0.5 * npts / (npts - 1) * (1 - b);
+	}
+}
+

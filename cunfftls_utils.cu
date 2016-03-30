@@ -30,6 +30,54 @@
 #include "cunfftls_utils.h"
 #include "cunfftls_typedefs.h"
 
+//////////////////////////////////////////////////////////////////////////
+// SORTING UTILITIES
+
+int compare_elements_reverse(const void *a, const void *b) {
+	const element *A = (const element *) a;
+	const element *B = (const element *) b;
+	if (B->value > A->value) return 1;
+	if (B->value == A->value) return 0;
+	else return -1;
+}
+
+__host__ void argsort(dTyp *arr, int *inds, int nmembers) {
+	element *elements = (element *) malloc(nmembers * sizeof(element));
+	for (int i = 0; i < nmembers; i++) {
+		elements[i].index = inds[i];
+		elements[i].value = arr[inds[i]];
+	}
+	qsort(elements, nmembers, sizeof(element), compare_elements_reverse);
+	for (int i = 0; i < nmembers; i++) 
+		inds[i] = elements[i].index;
+}
+////////////////////////////////////////////////////////////////////////////
+
+__global__ void findPeaksGPU(const dTyp *x, int *p, const int n, const dTyp thresh) {
+	int i = blockIdx.x * blockDim.x + threadIdx.x;
+	if (i < n - 1 && i > 0 && x[i] > thresh && x[i] > x[i-1] && x[i] > x[i+1])
+		p[i] = 1;
+} 
+
+__host__ void findPeaksCPU(const dTyp *x, int *p, int *npeaks, const int n, const dTyp thresh) {
+	int i = 1;
+	*npeaks = 0;
+	while (i < n - 1) {
+		if (x[i] < thresh) { 
+			p[i] = 0;
+			i++; 
+		} else if (x[i] > x[i - 1] && x[i] > x[i + 1]) { 
+			p[i] = 1; 
+			i++; 
+			(*npeaks)++;
+		} else {
+			p[i] = 0;
+			i++;
+		}
+	}
+	p[0] = 0;
+	p[n-1] = 0;
+}
 
 __host__ void getNfreqsAndCorrOversampling(int npts, Settings *settings){
    dTyp nfreqsr = 0.5 * npts * settings->over0 * settings->hifac;

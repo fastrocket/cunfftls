@@ -1,4 +1,4 @@
-# CUNFFTLS v1.4: CUDA Lomb Scargle implementation
+# CUNFFTLS v1.5: CUDA Lomb Scargle implementation
 
 ### (c) 2016, John Hoffman
 ### jah5@princeton.edu
@@ -24,11 +24,13 @@ the algorithm discussed in
 and borrows extensively from the associated codebase.
 
 #### Recent changes
-* **March 28, 2016**
+* **March 29, 2016** (1.5)
+   * Added ability to print out multiple peaks (`--npeaks` and `--peak-thresh`)
+* **March 28, 2016** (1.4)
    * Fixed a memory alignment bug that arose with certain values for the number of observations
    * Did more testing, this time with randomly generated lightcurves containing Nobs values between 10 and 10,000; no bugs found
    * Memory management at this point is a headache; will try to tackle this in future releases.
-* **March 26, 2016**
+* **March 26, 2016** (1.3)
    * fixed the bootstrapping method -- now bootstrapping is performed more efficiently, but there are two caveats currently:
 	     1. None of this has been tested in a rigorous and complete way, so use at your own risk.
 	     2. The random number generation is a little dubious, but very fast. Take a look at the **cuna** source code for more information.
@@ -51,7 +53,7 @@ Usage: ./cunfftlsf  [-hGvsd] [--version] [--in=<string>] [--list-in=<string>]
 
 ./cunfftlsf uses the NFFT adjoint operation to perform fast Lomb-Scargle calculations on GPU(s).
 
-  -h, --help                display usage/options
+-h, --help                display usage/options
       --version             display version
       --in=<string>         input file
       --list-in=<string>    filename containing list of input files
@@ -59,18 +61,20 @@ Usage: ./cunfftlsf  [-hGvsd] [--version] [--in=<string>] [--list-in=<string>]
       --list-out=<string>   filename to save peak LSP for each lightcurve
       --over=<float>        oversample factor
       --hifac=<float>       max frequency = hifac * nyquist frequency
+      --npeaks=<int>        number of secondary peaks to save
+      --peak-thresh=<float> FAP threshold for peak to be considered significant
       --thresh=<float>      will save lsp if and only if the false alarm probab
                             ility is below 'thresh'
       --device=<int>        device number (setting this forces this device to b
                             e the *only* device used)
-  -m, --memory-per-thread=<float, in MB> 
+  -m, --memory-per-thread=<float, in MB>
                             workspace (pinned) memory allocated for each thread
                             /stream
       --nthreads=<int>      number of openmp threads (tip: use a number >= numb
                             er of GPU's)
   -b, --nbootstraps=<int>   number of bootstrapped samples to use for significa
                             nce testing
-      --pow2, --power-of-two 
+      --pow2, --power-of-two
                             force nfreqs to be a power of 2
   -G, --floating-mean       use a floating mean (slightly slower, but more stat
                             istically robust)
@@ -78,7 +82,6 @@ Usage: ./cunfftlsf  [-hGvsd] [--version] [--in=<string>] [--list-in=<string>]
   -v, --verbose             more output
   -s, --save-maxp           save max(LSP) for all lightcurves
   -d, --dont-save-lsp       do not save full LSP
-
 
  ```
 

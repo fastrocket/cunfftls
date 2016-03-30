@@ -85,10 +85,10 @@ typedef struct MY_ALIGN(16) {
 	char filename_in     [STRBUFFER];
 	char filename_out    [STRBUFFER];
 	char filename_outlist[STRBUFFER];
-	int device, nfreqs, nthreads,nbootstraps;
+	int device, nfreqs, nthreads,nbootstraps, npeaks;
         size_t host_memory, device_memory;
 
-	dTyp over0, over, hifac, df, fthresh;
+	dTyp over0, over, hifac, df, fthresh, peak_significance;
 	cudaStream_t stream;
 	void *host_workspace;
 	void *device_workspace;

@@ -29,8 +29,8 @@ def get_signal(params):
 	omega = 2 * np.pi * params['freq']
 	phi = params['phi']
 	y  = np.cos(omega * np.multiply(x, 1 + jitter(params))  - phi) + noise(params)
-	#y += 0.6 * np.cos(2 * omega * np.multiply(x, 1 + jitter(params)) - 2 * np.pi * np.random.random() )
-	#y += 0.6 * np.cos(2 * np.pi * x * 1.31 * params['freq'] - 0.44 * params['phi'])
+	y += 0.6 * np.cos(2 * omega * np.multiply(x, 1 + jitter(params)) - 2 * np.pi * np.random.random() )
+	y += 0.6 * np.cos(2 * np.pi * x * 1.31 * params['freq'] - 0.44 * params['phi'])
 	return x, y
 
 def save_signal(x, y, lcfile='lc.dat'):
@@ -290,8 +290,8 @@ def inject_and_recover(params, nlc, do_lcs=False, nmin=10, nmax=10000, freqmin=0
 
 
 
-#make_fake_lcs(Params, 1000)
-inject_and_recover(Params, 1000, do_lcs=True)
+make_fake_lcs(Params, 1000)
+#inject_and_recover(Params, 1000, do_lcs=True)
 '''
 print "TESTING SINGLE AND DOUBLE PRECISION"
 test_single_double(Params)
