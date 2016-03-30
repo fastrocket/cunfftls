@@ -1,4 +1,4 @@
-# CUNFFTLS v1.5: CUDA Lomb Scargle implementation
+# CUNFFTLS v1.6: CUDA Lomb Scargle implementation
 
 ### (c) 2016, John Hoffman
 ### jah5@princeton.edu
@@ -24,6 +24,9 @@ the algorithm discussed in
 and borrows extensively from the associated codebase.
 
 #### Recent changes
+* **March 30, 2016**
+   * Added a few sanity checks
+   * Now, when running multiple threads and saving the peaks, each thread will write to their own unique file
 * **March 29, 2016** (1.5)
    * Added ability to print out multiple peaks (`--npeaks` and `--peak-thresh`)
 * **March 28, 2016** (1.4)
@@ -45,13 +48,9 @@ and borrows extensively from the associated codebase.
 
 ```
 $ ./cunfftls --help
-Usage: ./cunfftlsf  [-hGvsd] [--version] [--in=<string>] [--list-in=<string>] 
-                    [--out=<string>] [--list-out=<string>] [--over=<float>] 
-                    [--hifac=<float>] [--thresh=<float>] [--device=<int>] 
-                    [-m <float, in MB>] [--nthreads=<int>] [-b <int>] 
-                    [--pow2] [--print-timing]
+Usage: ./cunfftls  [options]
 
-./cunfftlsf uses the NFFT adjoint operation to perform fast Lomb-Scargle calculations on GPU(s).
+./cunfftls uses the NFFT adjoint operation to perform fast Lomb-Scargle calculations on GPU(s).
 
 -h, --help                display usage/options
       --version             display version

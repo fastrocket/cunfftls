@@ -28,6 +28,8 @@
 
 #include "cunfftls_typedefs.h"
 
+bool file_exists(const char *fname);
+
 // sorting
 typedef struct {
     int index;

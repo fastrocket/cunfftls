@@ -46,7 +46,13 @@ char progname[STRBUFFER];
 // calculate frequencies for the lomb-scargle periodogram
 dTyp * getFrequencies(dTyp *x, int npts, Settings *settings) {
   dTyp range = x[npts - 1] - x[0];
-  
+
+  // make sure range isn't 0 (not foolproof, but useful)
+  if (range < 0) {
+    eprint("lightcurve is not sorted by date\n");
+    exit(EXIT_FAILURE);
+  }  
+
   // df = nyquist frequency / over
   dTyp df = 1. / (settings->over * range);
 
@@ -278,9 +284,9 @@ void lombScargleFromLightcurveFile(Settings *settings) {
        
      getPeaks(lsp, &peaks, &npeaks, cutoff, settings);
      if (settings->lsp_flags & VERBOSE)
-	fprintf(stderr, "found %d peaks (%.5e, %.5e, ...)\n", npeaks, 
-		npeaks > 0 ? frqs[peaks[0]] : -1,
-		npeaks > 1 ? frqs[peaks[1]] : -1);
+	     fprintf(stderr, "found %d peaks (%.5e, %.5e, ...)\n", npeaks, 
+		                  npeaks > 0 ? frqs[peaks[0]] : -1,
+		                  npeaks > 1 ? frqs[peaks[1]] : -1);
   }
 
   // calculate fap values
@@ -322,11 +328,11 @@ void lombScargleFromLightcurveFile(Settings *settings) {
         frequency = -1;
         false_alarm = -1;
       } else {
-	frequency = frqs[peaks[i]];
-	if (settings->nbootstraps > 0) 
-	  false_alarm = probabilityBootstrap(lsp[peaks[i]], mu, sig);
-	else
-	  false_alarm = probability(lsp[peaks[i]], npts, settings->nfreqs, settings->over);
+        frequency = frqs[peaks[i]];
+        if (settings->nbootstraps > 0) 
+          false_alarm = probabilityBootstrap(lsp[peaks[i]], mu, sig);
+        else
+          false_alarm = probability(lsp[peaks[i]], npts, settings->nfreqs, settings->over);
       }
       fprintf(settings->outlist, " %.5e %.5e", frequency, false_alarm);
     }
@@ -374,7 +380,7 @@ void multipleLombScargle(Settings *settings) {
   }
 
   // if we're saving peak values to another file, open that file now.
-  if (settings->lsp_flags & SAVE_MAX_LSP) 
+  if (settings->lsp_flags & SAVE_MAX_LSP && settings->nthreads == 1) 
     settings->outlist = fopen(settings->filename_outlist, "w");
   
   // set number of OpenMP threads
@@ -408,6 +414,13 @@ void multipleLombScargle(Settings *settings) {
     thread_settings->device_workspace = d_workspace;
     thread_settings->host_workspace = h_workspace;
 
+    // open maxp-results file for this specific thread
+    if (thread_settings->lsp_flags & SAVE_MAX_LSP && thread_settings->nthreads > 1) {
+        sprintf(thread_settings->filename_outlist, "%s.%d", 
+				thread_settings->filename_outlist, thread);
+        thread_settings->outlist = fopen(thread_settings->filename_outlist, "w");
+    }
+
     int lcno = thread;
     while(lcno < nlightcurves){
 
@@ -420,6 +433,10 @@ void multipleLombScargle(Settings *settings) {
             nlightcurves, thread_settings->filename_in);
       
       // open lightcurve file
+      if (!file_exists(thread_settings->filename_in)) {
+        eprint("cannot find file: '%s'\n", thread_settings->filename_in);
+        exit(EXIT_FAILURE);
+      }
       thread_settings->in = fopen(thread_settings->filename_in, "r");
 
       // write filename (TODO: allow user to customize)
@@ -450,11 +467,14 @@ void multipleLombScargle(Settings *settings) {
     checkCudaErrors(cudaStreamDestroy(thread_settings->stream));
     checkCudaErrors(cudaFreeHost(thread_settings->host_workspace));
     checkCudaErrors(cudaFree(thread_settings->device_workspace));
-      free(thread_settings);
+    if (thread_settings->lsp_flags & SAVE_MAX_LSP)
+      fclose(thread_settings->outlist);
+    free(thread_settings);
   }
+  
 
   // close the file where peaks are stored
-  if (settings->lsp_flags & SAVE_MAX_LSP) 
+  if (settings->lsp_flags & SAVE_MAX_LSP && settings->nthreads == 1) 
     fclose(settings->outlist);
         
 }
@@ -471,7 +491,12 @@ void init(Settings * settings, bool list_mode) {
     checkCudaErrors(cudaSetDevice(settings->device));
   }
   if (!list_mode) {
+    
     // open lightcurve file and lsp file
+    if (!file_exists(settings->filename_in)) {
+      eprint("cannot find file: '%s'\n", settings->filename_in);
+      exit(EXIT_FAILURE);
+    }
     settings->in  = fopen(settings->filename_in, "r");
 
     if (settings->lsp_flags & SAVE_FULL_LSP)
@@ -559,6 +584,26 @@ void version(){
   #else
   printf("%s (single precision): version %s\n",progname, VERSION);
   #endif  
+}
+
+void sanity_check(Settings *settings) {
+	if (settings->nthreads <= 0) {
+		eprint("nthreads must be >= 1\n");
+		exit(EXIT_FAILURE);
+	}
+	if (settings->lsp_flags & SAVE_MAX_LSP 
+		&& !file_exists(settings->filename_inlist)) {
+		eprint("inlist [%s] does not exist or could not be opened.\n");
+		exit(EXIT_FAILURE);
+	}
+	if (settings->npeaks < 0) {
+		eprint("npeaks must be >= 0\n");
+		exit(EXIT_FAILURE);
+	}
+	if (settings->peak_significance < 0 || settings->peak_significance > 1){
+		eprint("--peak-thresh must be between 0 and 1\n");
+		exit(EXIT_FAILURE);
+	}
 }
 
 // (main)
@@ -747,7 +792,7 @@ int main(int argc, char *argv[]){
   
   settings->host_memory *= MB;
   settings->device_memory *= MB;
-
+  
   if (settings->lsp_flags & VERBOSE) {
     fprintf(stderr, "%-20s = %f\n", "over", settings->over0);
     fprintf(stderr, "%-20s = %f\n", "hifac", settings->hifac);
@@ -760,6 +805,7 @@ int main(int argc, char *argv[]){
   }
     
   // RUN 
+  sanity_check(settings);
   init(settings, list_in);
   launch(settings, list_in);
   finish(settings, list_in);

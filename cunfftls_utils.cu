@@ -30,6 +30,16 @@
 #include "cunfftls_utils.h"
 #include "cunfftls_typedefs.h"
 
+ // checks if file exists on filesystem
+bool file_exists(const char *fname) {
+    FILE *file;
+    if ((file = fopen(fname, "r"))) {
+        fclose(file);
+        return true;
+    }
+    return false;
+}
+
 //////////////////////////////////////////////////////////////////////////
 // SORTING UTILITIES
 
