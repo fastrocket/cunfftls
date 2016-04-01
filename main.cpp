@@ -276,9 +276,12 @@ void lombScargleFromLightcurveFile(Settings *settings) {
 
      // cutoff is the Pn value associated with the seletced significance criterion
      dTyp cutoff;
-     if (settings->nbootstraps > 0) 	
-        cutoff = getPnCutoffBootstrap(settings->peak_significance, mu, sig);
-     else
+     if (settings->nbootstraps > 0) {
+        if (settings->lsp_flags & USE_SNR)
+          cutoff = sig * settings->peak_significance + mu; 	
+        else
+          cutoff = getPnCutoffBootstrap(settings->peak_significance, mu, sig);
+     } else
         cutoff = getPnCutoff(settings->peak_significance, npts, 
 					settings->nfreqs, settings->over);
        
@@ -291,25 +294,41 @@ void lombScargleFromLightcurveFile(Settings *settings) {
 
   // calculate fap values
   dTyp fap;
-  if (settings->nbootstraps > 0)
-    fap    = probabilityBootstrap(pbest, mu, sig);
-  else
-    fap    = probability(pbest, npts, settings->nfreqs, 
+  if (settings->nbootstraps > 0) {
+    if (settings->lsp_flags & USE_SNR)
+      fap = (pbest - mu) / sig;
+    else 
+      fap = probabilityBootstrap(pbest, mu, sig);
+  } else
+    fap   = probability(pbest, npts, settings->nfreqs, 
                          settings->over);
   
-  if (settings->lsp_flags & VERBOSE ) 
-    fprintf(stderr, "%s: max freq: %.3e, false alarm probability: %.3e\n", 
+  if (settings->lsp_flags & VERBOSE ) {
+    if (settings->lsp_flags & USE_SNR) 
+      fprintf(stderr, "%s: max freq: %.3e, SNR: %.3e\n", 
               settings->filename_in, fbest, fap);
-
+    else 
+      fprintf(stderr, "%s: max freq: %.3e, false alarm probability: %.3e\n", 
+              settings->filename_in, fbest, fap);
+  }
   // save lomb scargle (1) if all lsp's are to be saved
   if(settings->lsp_flags & SAVE_FULL_LSP 
       // or (2) if only significant lsp's are to be saved and this
       //        lsp is significant
-      || (settings->lsp_flags & SAVE_IF_SIGNIFICANT 
-        && fap < settings->fthresh) ) {
+      || (
+          settings->lsp_flags & SAVE_IF_SIGNIFICANT 
+          && (
+               (fap < settings->fthresh && !(settings->lsp_flags & USE_SNR)) 
+            || (fap > settings->fthresh && (settings->lsp_flags & USE_SNR))
+             )
+         )) {
 
      settings->out = fopen(settings->filename_out, "w");
-     fprintf(settings->out, "#best freq | false alarm probability\n"
+     if (settings->lsp_flags & USE_SNR)
+       fprintf(settings->out, "#best freq | SNR\n"
+			    "#%.5e %.5e\n", fbest, fap);  
+     else
+       fprintf(settings->out, "#best freq | false alarm probability\n"
 			    "#%.5e %.5e\n", fbest, fap); 
      for(int i = 0; i < settings->nfreqs; i++) 
         fprintf(settings->out, "%e %e\n", frqs[i], lsp[i]);
@@ -329,9 +348,12 @@ void lombScargleFromLightcurveFile(Settings *settings) {
         false_alarm = -1;
       } else {
         frequency = frqs[peaks[i]];
-        if (settings->nbootstraps > 0) 
-          false_alarm = probabilityBootstrap(lsp[peaks[i]], mu, sig);
-        else
+        if (settings->nbootstraps > 0) {
+          if (settings->lsp_flags & USE_SNR)
+            false_alarm = lsp[peaks[i]] * sig + mu;
+          else
+            false_alarm = probabilityBootstrap(lsp[peaks[i]], mu, sig);
+	} else
           false_alarm = probability(lsp[peaks[i]], npts, settings->nfreqs, settings->over);
       }
       fprintf(settings->outlist, " %.5e %.5e", frequency, false_alarm);
@@ -649,6 +671,8 @@ int main(int argc, char *argv[]){
   struct arg_int *btstrp    = arg_int0("b", "nbootstraps","<int>",
           "number of bootstrapped samples to use for significance testing");  
   // flags
+  struct arg_lit *snr       = arg_lit0(NULL, "use-snr", 
+          "instead of FAP, use (power - <power>)/sqrt(<power^2>)");
   struct arg_lit *pow2      = arg_lit0(NULL, "pow2,power-of-two", 
           "force nfreqs to be a power of 2");
   struct arg_lit *flmean    = arg_lit0("G", "floating-mean", 
@@ -672,14 +696,14 @@ int main(int argc, char *argv[]){
 
   void *argtable[] = { hlp, vers, in, inlist, out, outlist, over, 
            hifac, peaks, peaksig, thresh, dev, mem, nth, btstrp, 
-           pow2, flmean, timing, verb, savemax, dsavelsp, end };
+           snr, pow2, flmean, timing, verb, savemax, dsavelsp, end };
   
   // check that argtable didn't raise any memory problems
   if (arg_nullcheck(argtable) != 0) {
-                eprint("%s: insufficient memory\n",progname);
+    eprint("%s: insufficient memory\n",progname);
     fprintf(stderr, "Try '%s --help' for more information\n", progname);
-                exit(EXIT_FAILURE);
-        }
+    exit(EXIT_FAILURE);
+  }
 
   // Parse the command line
   int n_error = arg_parse(argc, argv, argtable);
@@ -763,7 +787,8 @@ int main(int argc, char *argv[]){
     settings->lsp_flags  |= SAVE_IF_SIGNIFICANT;
   if (flmean->count     == 1)
     settings->lsp_flags  |= FLOATING_MEAN;
-
+  if (snr->count        == 1)
+    settings->lsp_flags  |= USE_SNR;
 
   ////////////////////
   // parameters

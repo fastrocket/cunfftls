@@ -75,7 +75,8 @@ typedef enum {
 	TIMING              = 0x08,
 	VERBOSE             = 0x10,
 	SAVE_IF_SIGNIFICANT = 0x20,
-        FLOATING_MEAN       = 0x40
+        FLOATING_MEAN       = 0x40,
+        USE_SNR             = 0x80
 } LSP_FLAGS;
 
 // settings 

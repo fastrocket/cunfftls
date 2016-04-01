@@ -24,6 +24,8 @@ the algorithm discussed in
 and borrows extensively from the associated codebase.
 
 #### Recent changes
+* **April 1, 2016**
+   * When bootstrapping, you can now work with signal-to-noise ratios instead of FAP by adding the `--use-snr` flag
 * **March 30, 2016**
    * Added a few sanity checks
    * Now, when running multiple threads and saving the peaks, each thread will write to their own unique file
@@ -52,7 +54,7 @@ Usage: ./cunfftls  [options]
 
 ./cunfftls uses the NFFT adjoint operation to perform fast Lomb-Scargle calculations on GPU(s).
 
--h, --help                display usage/options
+  -h, --help                display usage/options
       --version             display version
       --in=<string>         input file
       --list-in=<string>    filename containing list of input files
