@@ -55,7 +55,7 @@ double get_time()
 char progname[STRBUFFER];
 
 // calculate frequencies for the lomb-scargle periodogram
-dTyp * getFrequencies(dTyp *x, int npts, Settings *settings) {
+void setFrequencies(dTyp *x, int npts, dTyp *freqs, int nfreqs, dTyp over) {
   dTyp range = x[npts - 1] - x[0];
 
   // make sure range isn't 0 (not foolproof, but useful)
@@ -65,20 +65,102 @@ dTyp * getFrequencies(dTyp *x, int npts, Settings *settings) {
   }  
 
   // df = nyquist frequency / over
-  dTyp df = 1. / (settings->over * range);
-
-  // allocate frequency array
-  dTyp *freqs = (dTyp *)malloc(settings->nfreqs * sizeof(dTyp));
+  dTyp df = 1. / (over * range);
 
   // write frequencies
-  for (int i = 0; i < settings->nfreqs; i++)
+  for (int i = 0; i < nfreqs; i++)
     freqs[i] = (i + 1) * df;
-
-  return freqs;
-
 }
 
+int readN(FILE *in){
+  char buff[STRBUFFER];
+  int n;
+  if (fgets(buff, sizeof(buff), in) == NULL)
+    return 0;
+  
+  sscanf(buff, "%d", &n);
+  return n;
+}
 
+void readMultipleLCs(char **filenames, dTyp **tobs, dTyp **yobs, 
+                     dTyp **errs, int *npts, int nlc) {
+  
+  char buff[STRBUFFER];
+  int lineno = 0, ncols = 0, nobs_tot = 0, ncount;
+  FILE *in;
+  dTyp err;
+
+  for (int i = 0; i < nlc; i++){
+    in = fopen(filenames[i], 'r');
+    if (in == NULL){
+      sprintf(buff, "Cannot open %s", filenames[i]);
+      eprint(buff);
+      exit(EXIT_FAILURE);
+    }
+    ncount = readN(in);
+    if (ncount == 0){
+      sprintf(buff, "ZERO entries in %s", filenames[i]);
+      eprint(buff);
+      exit(EXIT_FAILURE);
+    }
+    nobs_tot += ncount;
+    npts[i] = ncount;
+    fclose(in);
+  }
+
+  *tobs = (dTyp *)malloc(nobs_tot * sizeof(dTyp));
+  *yobs = (dTyp *)malloc(nobs_tot * sizeof(dTyp));
+
+  int i0 = 0;
+  for (i = 0; i < nlc; i++){
+    // open file
+    in = fopen(filenames[i], 'r');
+
+    // skip first line
+    fgets(buff, sizeof(buff), in);
+
+    while (fgets(buff, sizeof(buff), in) != NULL) {
+
+      // read first data line to get number of columns
+      if (lineno == 0 && i == 0) {
+        ncols = sscanf(buff, THREE_COL_FMT, *tobs, *yobs, &err);
+        if (ncols == 3) {
+          *errs      = (dTyp *)malloc(tot_nobs * sizeof(dTyp));
+          (*errs)[0] = err;
+        }
+        else if (ncols == 2)
+          *errs = NULL;
+        else {
+          eprint("ncols = %d, which is not 2 or 3.\n", ncols);
+          exit(EXIT_FAILURE);
+        }
+        lineno ++;
+        continue;
+      }
+
+      // read line
+      else if (ncols == 2) 
+        ncount = sscanf(buff, TWO_COL_FMT, *tobs + i0, *yobs + i0);
+      else if (ncols == 3) 
+        ncount = sscanf(buff, THREE_COL_FMT, *tobs + i0, *yobs + i0, 
+          *errs + i0);
+
+      // handle errors
+      if (ncount != ncols) {
+        eprint("problem reading line %d; only %d of %d "
+         "values matched (t[i] = %e, y[i] = %e, errs[i] = %e\n)", 
+          lineno + 1, ncount, ncols, (*tobs)[lineno], (*yobs)[lineno],
+          ncols == 3 ? (*errs)[lineno] : 0);
+        exit(EXIT_FAILURE);
+      } 
+      i0 ++ ;
+    }
+
+    // close file
+    fclose(in);
+  }
+
+}
 
 // Read lightcurve from filestream
 void readLC(FILE *in, dTyp **tobs, dTyp **yobs, dTyp **errs, int *npts) {
@@ -216,29 +298,27 @@ void getPeaks(dTyp *lsp, int **peaks, int *npeaks, dTyp cutoff, Settings *settin
 void lombScargleFromLightcurveFile(Settings *settings) {
 
   dTyp *tobs, *yobs, *lspt, *frqs, *errs;
-  int npts;
-
+  int *npts;
   if (settings->lsp_flags & VERBOSE)
-	  fprintf(stderr, "reading lightcurve\n");
+    fprintf(stderr, "reading lightcurve\n");
 
-  // Read lightcurve
-  readLC(settings->in, &tobs, &yobs, &errs, &npts);
-  
-  // force grid to be power of two if necessary
-  // this will correct "over" (and "nfreqs")
-  if (settings->lsp_flags & FORCE_POWER_OF_TWO)
-    getNfreqsAndCorrOversampling(npts, settings);
-  else {
-    settings->over   = settings->over0;
-    settings->nfreqs = (int)floor(0.5 * settings->over 
-          * settings->hifac * npts);
+  settings->nfreqs_batch = (int *)malloc(settings->batch_size * sizeof(int));
+  // Read lightcurve(s)
+  readMultipleLCs(settings->filenames_in + settings->file_number, 
+                    &tobs, &yobs, &errs, &npts, settings->batch_size);
+
+  // Get number of frequencies
+  settings->over   = settings->over0;
+  int total_nobs = 0, total_nfreqs = 0;
+  for (int i = 0; i < settings->batch_size; i++){
+    settings->nfreqs_batch[i] 
+        = (int)floor(0.5 * settings->over * settings->hifac * npts[i]);
+    getFrequencies(tobs + total_nobs, npts + total_nobs, 
+                         settings, frqs + total_nfreqs, 
+                         settings->nfreqs_batch[i], settings->over);
+    total_nobs += npts[k];
+    total_nfreqs += settings->nfreqs_batch[i];
   }
-
-  if (settings->lsp_flags & VERBOSE)
-	  fprintf(stderr, "nfreqs = %d...getting frequencies\n",settings->nfreqs);
-
-  // compute frequencies
-  frqs = getFrequencies(tobs, npts, settings);
   
   if (settings->lsp_flags & VERBOSE)
 	  fprintf(stderr, "performing lomb scargle\n");
@@ -248,10 +328,12 @@ void lombScargleFromLightcurveFile(Settings *settings) {
   if (settings->lsp_flags & FLOATING_MEAN)
     lspt = generalizedLombScargle(tobs, yobs, errs, npts, settings);
   else
-    lspt = lombScargle(tobs, yobs, npts, settings);
+    lspt = lombScargleBatch(tobs, yobs, npts, nlc, settings);
 
   if (settings->lsp_flags & TIMING)
-	fprintf(stderr, "LSP calculation time for %d points: %.4e s\n", npts, get_time() - t0);
+	fprintf(stderr, "LSP calculation time for %d points in "
+                  "%d lightcurves: %.4e s\n", total_nobs, settings->batch_size,
+                                                get_time() - t0);
 
   // wait for all processes to finish
   checkCudaErrors(cudaStreamSynchronize(settings->stream));
@@ -260,21 +342,14 @@ void lombScargleFromLightcurveFile(Settings *settings) {
 	  fprintf(stderr, "copying memory from workspace\n");
 
   // transfer memory out of the workspace
-  dTyp *lsp = (dTyp *) malloc(settings->nfreqs * (settings->nbootstraps + 1) * sizeof(dTyp));
-  memcpy(lsp, lspt, settings->nfreqs * (settings->nbootstraps + 1) * sizeof(dTyp));
-
-
-  //perform bootstrapping if requested
-  dTyp mu, sig;
-  if (settings->nbootstraps > 0) {
-  	if (settings->lsp_flags & VERBOSE)
-	  	fprintf(stderr, "bootstrapping...\n");
-	  dTyp *bootstraps = lsp + settings->nfreqs;
-	  analyzeBootstraps(bootstraps, settings->nfreqs, settings->nbootstraps, &mu, &sig);
-  }
+  dTyp *lsp = (dTyp *) malloc(settings->nfreqs * sizeof(dTyp));
+  memcpy(lsp, lspt, total_nfreqs * sizeof(dTyp));
 
   if (settings->lsp_flags & VERBOSE)
 	  fprintf(stderr, "finding peaks\n");
+
+  fprintf(stderr, "QUITTING NOW, NOT READY TO GO ON!\n");
+  exit(EXIT_FAILURE);
 
   // find max
   int mmax = argmax(lsp, settings->nfreqs);
@@ -404,15 +479,20 @@ void multipleLombScargle(Settings *settings) {
   }
 
   // read entire list of lightcurves
-  char **lightcurves = (char **)malloc(nlightcurves * sizeof(char *));
-
+  settings->filenames_in  = (char **)malloc(nlightcurves * sizeof(char *));
+  settings->filenames_out = (char **)malloc(nlightcurves * sizeof(char *));
+  settings->nfiles = nlightcurves;
   for(int i = 0; i < nlightcurves; i++){
-    lightcurves[i] = (char *)malloc(STRBUFFER * sizeof(char)); 
-    ncount = fscanf(settings->inlist, "%s", lightcurves[i]);
+    settings->filenames_in[i] = (char *)malloc(STRBUFFER * sizeof(char)); 
+    settings->filenames_out[i]= (char *)malloc(STRBUFFER * sizeof(char));
+    ncount = fscanf(settings->inlist, "%s", settings->filenames_in[i]);
     if (ncount == 0) {
       eprint("cannot read lightcurve number %d\n", i + 1);
       exit(EXIT_FAILURE);
     }
+
+    // write filename (TODO: allow user to customize)
+    sprintf(settings->filenames_out[i], "%s.culsp", settings->filenames_in[i]);
   }
 
   // if we're saving peak values to another file, open that file now.
@@ -457,45 +537,34 @@ void multipleLombScargle(Settings *settings) {
         thread_settings->outlist = fopen(thread_settings->filename_outlist, "w");
     }
 
-    int lcno = thread;
+    int lcno = thread * thread_settings->batch_size;
     while(lcno < nlightcurves){
-      // set the lightcurve filename
-      sprintf(thread_settings->filename_in, "%s", lightcurves[lcno]);
-    
-      if (thread_settings->lsp_flags & VERBOSE)
-        fprintf(stderr, "thread %d, gpu %d: Doing lc %d of %d [%s]\n", 
-            thread, thread_settings->device, lcno + 1, 
-            nlightcurves, thread_settings->filename_in);
+
+      thread_settings->file_number = lcno;
       
-      // open lightcurve file
-      if (!file_exists(thread_settings->filename_in)) {
-        eprint("cannot find file: '%s'\n", thread_settings->filename_in);
-        exit(EXIT_FAILURE);
+      // modify batch size if there arent enough files
+      if (lcno + thread_settings->batch_size >= nlightcurves)
+        thread_settings->batch_size = nlightcurves - lcno;
+
+      if (thread_settings->lsp_flags & VERBOSE)
+        fprintf(stderr, "thread %d, gpu %d: Doing lcs %d - %d of %d [%s]\n", 
+            thread, thread_settings->device, lcno + 1, 
+            lcno + thread_settings->batch_size,
+            nlightcurves, thread_settings->filenames_in[lcno]);
+
+      // test all lightcurve files to ensure their existence
+      for (int i = 0; i < thread_settings->batch_size; i++){
+        if (!file_exists(thread_settings->filenames_in[lcno + i])) {
+          eprint("cannot find file: '%s'\n", thread_settings->filenames_in[lcno + 1]);
+          exit(EXIT_FAILURE);
+        }
       }
-      thread_settings->in = fopen(thread_settings->filename_in, "r");
-
-      // write filename (TODO: allow user to customize)
-      sprintf(thread_settings->filename_out, "%s.lsp", 
-              thread_settings->filename_in);
-
-      //open the LSP file if we'll be writing to it
-      if (thread_settings->lsp_flags     & SAVE_FULL_LSP
-           || thread_settings->lsp_flags & SAVE_IF_SIGNIFICANT)
-        thread_settings->out = fopen(thread_settings->filename_out, "w");
 
       // compute lomb scargle (which will also save lsp to file)
       lombScargleFromLightcurveFile(thread_settings);
-  
-      // close lightcurve file
-      fclose(thread_settings->in);
-
-      // close LSP file
-      if (thread_settings->lsp_flags     & SAVE_FULL_LSP
-           || thread_settings->lsp_flags & SAVE_IF_SIGNIFICANT)
-        fclose(thread_settings->out);
 
       // increment lightcurve number
-      lcno += settings->nthreads;
+      lcno += thread_settings->nthreads * thread_settings->batch_size;
     } 
     if (thread_settings->lsp_flags & VERBOSE)
       fprintf(stderr, "thread %d (GPU %d) finished.\n", 
@@ -632,6 +701,12 @@ void sanity_check(Settings *settings) {
 		eprint("npeaks must be >= 0\n");
 		exit(EXIT_FAILURE);
 	}
+
+  if (settings->batch_size < 1) {
+    eprint("batch-size must be >= 1\n");
+    exit(EXIT_FAILURE);
+  }
+
 	if (settings->peak_significance < 0 || settings->peak_significance > 1){
 		eprint("--peak-thresh must be between 0 and 1\n");
 		exit(EXIT_FAILURE);
@@ -641,6 +716,9 @@ void sanity_check(Settings *settings) {
 // (main)
 int main(int argc, char *argv[]){
   Settings *settings = (Settings *) malloc(sizeof(Settings));
+  settings->nfreqs_batch = NULL;
+  settings->host_workspace = NULL;
+  settings->device_workspace = NULL;
   sprintf(progname, "%s", argv[0]);
   ////////////////////////////////////////////////////////////////////////
   // command line arguments
@@ -679,7 +757,10 @@ int main(int argc, char *argv[]){
           "number of openmp threads "
           "(tip: use a number >= number of GPU's)");
   struct arg_int *btstrp    = arg_int0("b", "nbootstraps","<int>",
-          "number of bootstrapped samples to use for significance testing");  
+          "number of bootstrapped samples to use for significance testing"); 
+  struct arg_int *batch    = arg_int0("B", "batch-size","<int>",
+          "number of lightcurves to process in a batch of lightcurves"); 
+
   // flags
   struct arg_lit *snr       = arg_lit0(NULL, "use-snr", 
           "instead of FAP, use (power - <power>)/sqrt(<power^2>)");
@@ -705,7 +786,7 @@ int main(int argc, char *argv[]){
   struct arg_end *end = arg_end(20);
 
   void *argtable[] = { hlp, vers, in, inlist, out, outlist, over, 
-           hifac, peaks, peaksig, thresh, dev, mem, nth, btstrp, 
+           hifac, peaks, peaksig, thresh, dev, mem, nth, btstrp, batch, 
            snr, pow2, flmean, timing, verb, savemax, dsavelsp, end };
   
   // check that argtable didn't raise any memory problems
@@ -806,11 +887,17 @@ int main(int argc, char *argv[]){
   settings->over0       = over->count   == 1 ? (dTyp) over->dval[0]   :   1;
   settings->hifac       = hifac->count  == 1 ? (dTyp) hifac->dval[0]  :   1;
   settings->device      = dev->count    == 1 ? (int)  dev->ival[0]    :  -1;
-  settings->nthreads    = nth->count    == 1 ? (size_t)  nth->ival[0]    :   1;
-  settings->fthresh     = thresh->count == 1 ? (dTyp) thresh->dval[0] : 0.0;
-  settings->nbootstraps = btstrp->count == 1 ? (size_t) btstrp->ival[0]  :   0;
-  settings->npeaks      = peaks->count  == 1 ? (int)  peaks->ival[0] : 0;
+  settings->nthreads    = nth->count    == 1 ? (size_t)nth->ival[0]   : 1;
+  settings->fthresh     = thresh->count == 1 ? (dTyp) thresh->dval[0]   : 0.0;
+  settings->nbootstraps = btstrp->count == 1 ? (size_t) btstrp->ival[0] : 0;
+  settings->batch_size  = batch->count  == 1 ? (int)  batch->ival[0]  : 1;
+  settings->npeaks      = peaks->count  == 1 ? (int)  peaks->ival[0]  : 0;
   settings->peak_significance = peaksig->count == 1 ? (dTyp) peaksig->dval[0] : 0;
+
+  if (settings->nbootstraps * settings->nbatch > 0){
+    eprint("cannot perform bootstrapping in batched mode.\n");
+    exit(EXIT_FAILURE);
+  }
 
   // set workspace memory
   size_t total_memory   = mem->count    == 1 ? (size_t)  mem->ival[0] : 512;
@@ -837,6 +924,7 @@ int main(int argc, char *argv[]){
     fprintf(stderr, "%-20s = %ld MB\n", "memory (host)", settings->host_memory/MB);
     fprintf(stderr, "%-20s = %ld MB\n", "memory (device)", settings->device_memory/MB);
     fprintf(stderr, "%-20s = %d\n", "nbootstraps", settings->nbootstraps);
+    fprintf(stderr, "%-20s = %d\n", "batch_size", settings->batch_size);
   }
     
   // RUN 

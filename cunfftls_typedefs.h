@@ -75,24 +75,32 @@ typedef enum {
 	TIMING              = 0x08,
 	VERBOSE             = 0x10,
 	SAVE_IF_SIGNIFICANT = 0x20,
-        FLOATING_MEAN       = 0x40,
-        USE_SNR             = 0x80
+    FLOATING_MEAN       = 0x40,
+    USE_SNR             = 0x80
 } LSP_FLAGS;
 
 // settings 
 typedef struct MY_ALIGN(16) {
 	FILE *inlist, *in, *out, *outlist;
+
+	int batch_size, file_number, nfiles;
+	char **filenames_in;
+	char **filenames_out;
+	int   *nfreqs_batch;
+
 	char filename_inlist [STRBUFFER];
 	char filename_in     [STRBUFFER];
 	char filename_out    [STRBUFFER];
 	char filename_outlist[STRBUFFER];
 	int device, nfreqs, nthreads,nbootstraps, npeaks;
-        size_t host_memory, device_memory;
+    size_t host_memory, device_memory;
 
+  
 	dTyp over0, over, hifac, df, fthresh, peak_significance;
 	cudaStream_t stream;
 	void *host_workspace;
 	void *device_workspace;
+
 	unsigned int nfft_flags;
 	unsigned int lsp_flags;
 } Settings;

@@ -31,6 +31,10 @@ __host__  dTyp *
 lombScargle(const dTyp *tobs, const dTyp *yobs, int npts, 
             Settings *settings); 
 
+__host__  dTyp *
+lombScargleBatch(const dTyp *tobs, const dTyp *yobs, int *npts, int nlc, 
+            Settings *settings); 
+
 __host__ dTyp *
 generalizedLombScargle(const dTyp *obs, const dTyp *yobs, const dTyp *errs,
             int npts, Settings *settings);
