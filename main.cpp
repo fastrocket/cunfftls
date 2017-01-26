@@ -30,6 +30,8 @@
 #include <argtable2.h>
 #include <omp.h>
 #include <time.h>
+#include <sys/time.h>
+#include <sys/resource.h>
 #include <cuda.h>
 #include <cuda_profiler_api.h>
 
@@ -39,6 +41,15 @@
 #include "cunfftls_typedefs.h"
 #include "cunfftls_utils.h"
 #include "cunfftls_periodogram.h"
+
+
+double get_time()
+{
+    struct timeval t;
+    struct timezone tzp;
+    gettimeofday(&t, &tzp);
+    return t.tv_sec + t.tv_usec*1e-6;
+}
 
 // program name
 char progname[STRBUFFER];
@@ -231,12 +242,16 @@ void lombScargleFromLightcurveFile(Settings *settings) {
   
   if (settings->lsp_flags & VERBOSE)
 	  fprintf(stderr, "performing lomb scargle\n");
+  double t0 = get_time();
 
   // compute periodogram
   if (settings->lsp_flags & FLOATING_MEAN)
     lspt = generalizedLombScargle(tobs, yobs, errs, npts, settings);
   else
     lspt = lombScargle(tobs, yobs, npts, settings);
+
+  if (settings->lsp_flags & TIMING)
+	fprintf(stderr, "LSP calculation time for %d points: %.4e s\n", npts, get_time() - t0);
 
   // wait for all processes to finish
   checkCudaErrors(cudaStreamSynchronize(settings->stream));
@@ -323,7 +338,6 @@ void lombScargleFromLightcurveFile(Settings *settings) {
              )
          )) {
 
-     settings->out = fopen(settings->filename_out, "w");
      if (settings->lsp_flags & USE_SNR)
        fprintf(settings->out, "#best freq | SNR\n"
 			    "#%.5e %.5e\n", fbest, fap);  
@@ -332,7 +346,6 @@ void lombScargleFromLightcurveFile(Settings *settings) {
 			    "#%.5e %.5e\n", fbest, fap); 
      for(int i = 0; i < settings->nfreqs; i++) 
         fprintf(settings->out, "%e %e\n", frqs[i], lsp[i]);
-     fclose(settings->out);
   }
 
   
@@ -380,6 +393,7 @@ void multipleLombScargle(Settings *settings) {
 
   // get number of GPUs
   int ngpus;
+
   checkCudaErrors(cudaGetDeviceCount(&ngpus));
 
   // read the number of files from the first line
@@ -445,7 +459,6 @@ void multipleLombScargle(Settings *settings) {
 
     int lcno = thread;
     while(lcno < nlightcurves){
-
       // set the lightcurve filename
       sprintf(thread_settings->filename_in, "%s", lightcurves[lcno]);
     
@@ -465,17 +478,20 @@ void multipleLombScargle(Settings *settings) {
       sprintf(thread_settings->filename_out, "%s.lsp", 
               thread_settings->filename_in);
 
-      // open lsp file if we're saving the LSP
-      if (thread_settings->lsp_flags & SAVE_FULL_LSP)
-        thread_settings->out = 
-            fopen(thread_settings->filename_out, "w");
-      
+      //open the LSP file if we'll be writing to it
+      if (thread_settings->lsp_flags     & SAVE_FULL_LSP
+           || thread_settings->lsp_flags & SAVE_IF_SIGNIFICANT)
+        thread_settings->out = fopen(thread_settings->filename_out, "w");
+
       // compute lomb scargle (which will also save lsp to file)
       lombScargleFromLightcurveFile(thread_settings);
   
-      // close lightcurve file (and lsp file)
+      // close lightcurve file
       fclose(thread_settings->in);
-      if (thread_settings->lsp_flags & SAVE_FULL_LSP) 
+
+      // close LSP file
+      if (thread_settings->lsp_flags     & SAVE_FULL_LSP
+           || thread_settings->lsp_flags & SAVE_IF_SIGNIFICANT)
         fclose(thread_settings->out);
 
       // increment lightcurve number
@@ -493,12 +509,7 @@ void multipleLombScargle(Settings *settings) {
       fclose(thread_settings->outlist);
     free(thread_settings);
   }
-  
 
-  // close the file where peaks are stored
-  if (settings->lsp_flags & SAVE_MAX_LSP && settings->nthreads == 1) 
-    fclose(settings->outlist);
-        
 }
   
 // initialize before calculating LSP
@@ -562,7 +573,6 @@ void launch(Settings *settings, bool list_mode) {
 
 // free memory and close files
 void finish(Settings *settings, bool list_mode) {
-
   checkCudaErrors(cudaDeviceSynchronize());
 
   if (!list_mode) {

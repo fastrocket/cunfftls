@@ -12,11 +12,11 @@ NAME            := cunfftls
 NVCC=nvcc
 CC=g++
 
-CUNA_DIR=
+CUNA_DIR=/usr/local
 #../cunfft_adjoint
-CUDA_VERSION=7.5
+CUDA_VERSION=8.0
 BLOCK_SIZE=256
-VERSION=1.6
+VERSION=1.7
 
 SRCDIR=.
 HEADERDIR=.
@@ -27,16 +27,20 @@ BINDIR=.
 #OPTIMIZE_CPU=
 #OPTIMIZE_GPU=
 DEBUG=
+#GDB_NVCC=-g -G
+#GDB_CXX=-g
+GDB_NVCC=
+GDB_CXX=
 #DEBUG=-DDEBUG
-OPTIMIZE_CPU= -O3
-OPTIMIZE_GPU= -Xcompiler -O3 --use_fast_math
+OPTIMIZE_CPU= -O3 
+OPTIMIZE_GPU= -Xcompiler -O3 #--use_fast_math
 DEFS := $(DEBUG) -DBLOCK_SIZE=$(BLOCK_SIZE) -DVERSION=\"$(VERSION)\"
-NVCCFLAGS := $(DEFS) $(OPTIMIZE_GPU) -Xcompiler -fopenmp -Xcompiler -fpic --gpu-architecture=compute_$(ARCH) --gpu-code=sm_$(ARCH),compute_$(ARCH) 
-CFLAGS := $(DEFS) -fPIC -fopenmp -Wall $(OPTIMIZE_CPU)
+NVCCFLAGS := $(GDB_NVCC) $(DEFS) $(OPTIMIZE_GPU) -Xcompiler -fopenmp -Xcompiler -fpic --gpu-architecture=compute_$(ARCH) --gpu-code=sm_$(ARCH),compute_$(ARCH) 
+CFLAGS := $(GDB_CXX) $(DEFS) -fPIC -fopenmp -Wall $(OPTIMIZE_CPU)
 
 CUDA_LIBS =`pkg-config --libs cudart-$(CUDA_VERSION)` `pkg-config --libs curand-$(CUDA_VERSION)`
 
-CUDA_INCLUDE =`pkg-config --cflags cudart-$(CUDA_VERSION)` `pkg-config --cflags curand-$(CUDA_VERSION)`
+CUDA_INCLUDE = -I/usr/local/include `pkg-config --cflags cudart-$(CUDA_VERSION)` `pkg-config --cflags curand-$(CUDA_VERSION)`
 
 LIBS := -L$(LIBDIR) -L$(CUNA_DIR)/lib $(CUDA_LIBS) -lm -lgomp
 
@@ -53,7 +57,7 @@ CU_OBJ_FILES_DOUBLE := $(CU_FILES:%.cu=$(BUILDDIR)/%d.o)
 
 
 
-INCLUDE := $(CUDA_INCLUDE) -I$(HEADERDIR) -I$(CUNA_DIR)/inc
+INCLUDE := $(CUDA_INCLUDE) -I$(HEADERDIR) -I$(CUNA_DIR)/include
 
 all : single double $(NAME)f $(NAME)d
 
